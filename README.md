@@ -69,7 +69,7 @@ This pulls in every `dataset.jsonl` under `datasets/*` and writes `datasets/data
 ### 2. Train with QLoRA
 
 ```bash
-python scripts/train.py
+python src/train.py
 ```
 
 Outputs checkpoints under `output/deepseek-ai/TRAINING-N/checkpoint-M/`.  
@@ -78,7 +78,7 @@ Special/chat tokens, `tokenizer.json`, `vocab.json`, `merges.txt`, and your `cha
 ### 3. Merge LoRA into the base
 
 ```bash
-python scripts/merge_adapter.py
+python src/merge_adapter.py
 ```
 
 -   Picks the **last** `training-*` / `checkpoint-*`

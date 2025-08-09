@@ -25,71 +25,27 @@ from tokenizers import Tokenizer
 from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training
 from config.config import MODEL_NAME
 
-SYSTEM_PROMPT = (
-    "You are a structured assistant. Respond in exactly two parts using the format:\n"
-    "<think>[Your reasoning]</think>\n<output>[Your answer]</output>"
+from src.helpers.loggers import log, debug
+from src.training_config import (
+    SYSTEM_PROMPT,
+    DATA_PATH,
+    OUTPUT_BASE_DIR,
+    LORA_CONFIG_PATH,
+    ANCHOR_INTO_OUTPUT,
+    SUPERVISE_OUTPUT_ONLY,
+    DEBUG,
+    DEBUG_SAMPLE_LIMIT,
+    DEBUG_SAMPLE_RANDOM,
+    DEBUG_SAMPLE_PROB,
+    _DEBUG_SEEN,
+    FINAL_LOG_FH,
+    _ORIG_STDOUT,
+    _ORIG_STDERR,
+    TEE_ACTIVE,
+    EVAL_QUESTIONS,
+    ASSISTANT_OPEN_WITH_NL,
+    ASSISTANT_OPEN_NO_NL
 )
-
-DATA_PATH = "datasets/data.jsonl"
-OUTPUT_BASE_DIR = Path(f"output/{MODEL_NAME}")
-LORA_CONFIG_PATH = "config/lora_config.json"
-
-# We'll compute a canonical assistant-open IDs at runtime (see main()).
-# Default ASSISTANT_OPEN string used for template matching — your
-# chat_template.jinja should produce one of the two common variants:
-#   "<|im_start|><|assistant|>\n"  (with newline)
-#   "<|im_start|><|assistant|>"   (no newline)
-# We'll try to detect which the tokenizer/chat_template emits.
-ASSISTANT_OPEN = "<|im_start|><|assistant|>\n"  # kept as default; canonical computed at runtime
-
-# If True, anchor generation prompt inside <output> to force answer tokens
-ANCHOR_INTO_OUTPUT = True
-
-# If True, supervise ONLY the <output>...</output> span instead of entire assistant block.
-SUPERVISE_OUTPUT_ONLY = False
-
-# Debugging toggle
-DEBUG = True
-DEBUG_SAMPLE_LIMIT = 10
-DEBUG_SAMPLE_RANDOM = False
-DEBUG_SAMPLE_PROB = 0.05
-_DEBUG_SEEN = 0
-DEF_LOG_PREFIX = "🔧 "
-DEF_DBG_PREFIX = "🐞 "
-FINAL_LOG_FH = None
-_ORIG_STDOUT = None
-_ORIG_STDERR = None
-TEE_ACTIVE = False  # set True after we install the tee streams
-
-def _write_sink(s: str):
-    try:
-        if FINAL_LOG_FH:
-            FINAL_LOG_FH.write(s + "\n")
-            FINAL_LOG_FH.flush()
-    except Exception:
-        pass
-
-def log(msg):
-    s = f"\n{DEF_LOG_PREFIX}{msg}\n{'=' * 60}"
-    print(s)
-    # avoid double-writing: when tee is active, print already goes to file
-    if not TEE_ACTIVE:
-        _write_sink(s)
-
-
-def debug(msg):
-    if DEBUG:
-        s = f"\n{DEF_DBG_PREFIX}{msg}\n{'-' * 60}"
-        print(s)
-        if not TEE_ACTIVE:
-            _write_sink(s)
-
-EVAL_QUESTIONS = [
-  "2+2?",
-  "Translate 'focus' to Polish.",
-  "Is 7 > 5?",
-  "Capital of France?",
-]
 
 class _TeeStream:
     """
@@ -142,18 +98,18 @@ class SFTTrainer(Trainer):
 
 class StopSequenceCriteria(StoppingCriteria):
      def __init__(self, stop_sequences_ids):
-         self.stop_sequences_ids = stop_sequences_ids
-         self.window = max(len(s) for s in stop_sequences_ids) if stop_sequences_ids else 0
-         self.buf = []
+        self.stop_sequences_ids = stop_sequences_ids
+        self.window = max(len(s) for s in stop_sequences_ids) if stop_sequences_ids else 0
+        self.buf = []
 
      def __call__(self, input_ids, scores, **kwargs):
-         if self.window == 0:
-             return False
-         self.buf = input_ids[0].tolist()[-self.window:]
-         for s in self.stop_sequences_ids:
-             if len(self.buf) >= len(s) and self.buf[-len(s):] == s:
-                 return True
-         return False
+        if self.window == 0:
+            return False
+        self.buf = input_ids[0].tolist()[-self.window:]
+        for s in self.stop_sequences_ids:
+            if len(self.buf) >= len(s) and self.buf[-len(s):] == s:
+                return True
+        return False
 
 def prepare_output_dir() -> Path:
     existing_dirs = [
@@ -172,10 +128,7 @@ def load_and_prepare_tokenizer(output_dir: Path):
         add_bos_token=False,
         add_eos_token=False,
     )
-    # Do NOT extend vocab with new tags under PEFT/QLoRA.
-    # Only ensure we have a pad token.
     if tokenizer.pad_token is None:
-        # Prefer eos as pad for many chat models to avoid OOV '<|pad|>'
         tokenizer.pad_token = tokenizer.eos_token or tokenizer.unk_token
 
     # Quick visibility check
@@ -225,10 +178,11 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
 
     # Locate assistant-open using canonical_assistant_ids
     start_pos = find_token_sequence(token_ids, canonical_assistant_ids)
+
     if start_pos == -1:
         # fall back to trying both common variants
-        cand_with_nl = tokenizer.encode("<|im_start|><|assistant|>\n", add_special_tokens=False)
-        cand_no_nl = tokenizer.encode("<|im_start|><|assistant|>", add_special_tokens=False)
+        cand_with_nl = tokenizer.encode(ASSISTANT_OPEN_WITH_NL, add_special_tokens=False)
+        cand_no_nl = tokenizer.encode(ASSISTANT_OPEN_NO_NL, add_special_tokens=False)
         start_pos = find_token_sequence(token_ids, cand_with_nl)
         used_marker = cand_with_nl
         if start_pos == -1:
@@ -237,7 +191,6 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
         else:
             used_marker = cand_with_nl
         if start_pos == -1:
-            # helpful debug before failing
             print("❌ Could not find assistant marker in tokens (tokenize_function)")
             tail = token_ids[-120:] if len(token_ids) > 120 else token_ids
             print("tail ids:", tail)
@@ -480,10 +433,10 @@ def load_model_and_prepare_for_qora(tokenizer, output_dir: Path):
 
 
 def is_structured_output(text: str) -> bool:
-	# Try to isolate the assistant chunk if present, else just scan tail
-	m = re.search(r"<\|im_start\|><\|assistant\|>\s*(.*)", text, re.DOTALL)
-	segment = m.group(1) if m else text
-	return all(tag in segment for tag in ("<think>", "</think>", "<output>", "</output>"))
+    # Try to isolate the assistant chunk if present, else just scan tail
+    m = re.search(r"<\|im_start\|><\|assistant\|>\s*(.*)", text, re.DOTALL)
+    segment = m.group(1) if m else text
+    return all(tag in segment for tag in ("<think>", "</think>", "<output>", "</output>"))
 
 
 class EvalCallback(TrainerCallback):
@@ -698,10 +651,8 @@ def main():
 
     # Determine canonical assistant-open token ids by rendering a sample formatted prompt
     # and checking which variant exists in the tokenization.
-    s_nl = tokenizer.encode("<|im_start|><|assistant|>\n", add_special_tokens=False)
-    s_no = tokenizer.encode("<|im_start|><|assistant|>", add_special_tokens=False)
-    debug(f"candidate s_nl ids: {s_nl} tokens: {tokenizer.convert_ids_to_tokens(s_nl)}")
-    debug(f"candidate s_no ids: {s_no} tokens: {tokenizer.convert_ids_to_tokens(s_no)}")
+    s_nl = tokenizer.encode(ASSISTANT_OPEN_WITH_NL, add_special_tokens=False)
+    s_no = tokenizer.encode(ASSISTANT_OPEN_NO_NL, add_special_tokens=False)
 
     # Save chat template & tokenizer files (so canonical detection uses same template)
     log("Saving chat template to tokenizer")
@@ -736,25 +687,18 @@ def main():
 
     if pos_no != -1 and pos_nl == -1:
         canonical_assistant_ids = s_no
-        ASSISTANT_OPEN_STR = "<|im_start|><|assistant|>"
         debug("Canonical assistant marker: no-newline variant")
     elif pos_nl != -1 and pos_no == -1:
         canonical_assistant_ids = s_nl
-        ASSISTANT_OPEN_STR = "<|im_start|><|assistant|>\n"
         debug("Canonical assistant marker: newline variant")
     elif pos_nl != -1 and pos_no != -1:
         # prefer exact match with no newline if both present (rare)
         canonical_assistant_ids = s_no
-        ASSISTANT_OPEN_STR = "<|im_start|><|assistant|>"
         debug("Both variants in template; picking no-newline as canonical")
     else:
         # fallback: prefer s_nl if tokenizer tends to add newline (observed in your logs)
         canonical_assistant_ids = s_nl
-        ASSISTANT_OPEN_STR = "<|im_start|><|assistant|>\n"
         debug("No variant found in detection; defaulting to newline variant (best-effort)")
-
-    print("Canonical assistant marker ids:", canonical_assistant_ids, tokenizer.convert_ids_to_tokens(canonical_assistant_ids))
-    print("Formatted prompt tail repr:", repr(fmt[-200:]))
 
     log("Loading and tokenizing dataset")
     dataset = load_dataset("json", data_files=DATA_PATH, split="train")
@@ -773,10 +717,6 @@ def main():
 
     log("Loading model and applying LoRA")
     model = load_model_and_prepare_for_qora(tokenizer, output_dir)
-
-    print("=== Final Chat Template ===")
-    print(tokenizer.chat_template)
-    print("===========================")
 
     log("Training model")
     train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids)
