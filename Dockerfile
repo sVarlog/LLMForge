@@ -18,4 +18,4 @@ RUN pip install transformers datasets peft accelerate bitsandbytes trl einops
 WORKDIR /workspace
 COPY . .
 
-CMD ["python", "scripts/train.py"]
+CMD ["python", "src/train.py"]

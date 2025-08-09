@@ -15,7 +15,7 @@ services:
             - ./:/workspace
             - ./config:/workspace/config
         working_dir: /workspace
-        command: python scripts/train.py
+        command: python src/train.py
         deploy:
             resources:
                 reservations:
