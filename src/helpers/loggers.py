@@ -1,4 +1,4 @@
-from src.training_config import (
+from config.training_config import (
     FINAL_LOG_FH, 
     DEF_LOG_PREFIX, 
     TEE_ACTIVE, 
