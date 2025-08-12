@@ -26,7 +26,7 @@ from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training
 from config.config import MODEL_NAME
 
 from src.helpers.loggers import log, debug
-from src.training_config import (
+from config.training_config import (
     SYSTEM_PROMPT,
     DATA_PATH,
     OUTPUT_BASE_DIR,
