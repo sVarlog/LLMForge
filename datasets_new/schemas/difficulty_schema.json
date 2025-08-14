@@ -1,0 +1,72 @@
+{
+    "difficulty_schema": {
+        "1": {
+            "description": "Very simple, direct factual Q&A with no reasoning chains.",
+            "criteria": {
+                "reasoning_depth": "Minimal; 1-2 direct facts or steps.",
+                "token_length": {
+                    "think": "≤50 tokens or null",
+                    "output": "50-100 tokens"
+                },
+                "domain_complexity": "General knowledge or common business terms, no specialist jargon.",
+                "ambiguity": "None; clearly stated context and expected answer."
+            }
+        },
+        "2": {
+            "description": "Simple application of concepts; short explanation.",
+            "criteria": {
+                "reasoning_depth": "Basic cause-effect or definition + example.",
+                "token_length": {
+                    "think": "50-100 tokens",
+                    "output": "100-150 tokens"
+                },
+                "domain_complexity": "Low; common professional/business use cases.",
+                "ambiguity": "Low; minimal assumptions required."
+            }
+        },
+        "3": {
+            "description": "Moderate complexity, requires connecting multiple ideas.",
+            "criteria": {
+                "reasoning_depth": "2-3 linked reasoning steps with minor trade-offs.",
+                "token_length": {
+                    "think": "100-150 tokens",
+                    "output": "150-200 tokens"
+                },
+                "domain_complexity": "Medium; some technical or domain-specific terminology.",
+                "ambiguity": "Moderate; needs small clarifications or assumptions."
+            }
+        },
+        "4": {
+            "description": "Complex multi-step reasoning with constraints or optimization.",
+            "criteria": {
+                "reasoning_depth": "3-5 steps; must evaluate trade-offs or scenarios.",
+                "token_length": {
+                    "think": "150-200 tokens",
+                    "output": "200-250 tokens"
+                },
+                "domain_complexity": "High; advanced domain knowledge (business, AI, finance, etc.).",
+                "ambiguity": "Moderate-high; multiple valid approaches."
+            }
+        },
+        "5": {
+            "description": "Highly complex, expert-level problem solving or strategy.",
+            "criteria": {
+                "reasoning_depth": "5+ steps; deep domain reasoning, synthesis of multiple sources.",
+                "token_length": {
+                    "think": "250-300 tokens",
+                    "output": "250-300 tokens"
+                },
+                "domain_complexity": "Very high; requires niche expertise and integration of cross-domain knowledge.",
+                "ambiguity": "High; multiple plausible paths and strong justification needed."
+            }
+        }
+    },
+    "notes": {
+        "token_length_guideline": "Lengths are approximate; small variations allowed if quality remains high.",
+        "difficulty_determination": [
+            "Reasoning depth is the primary factor.",
+            "Domain complexity and ambiguity refine difficulty level.",
+            "Token length is used to maintain consistency, not as the sole difficulty metric."
+        ]
+    }
+}
