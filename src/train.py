@@ -47,6 +47,41 @@ from config.training_config import (
     ASSISTANT_OPEN_NO_NL
 )
 
+# --- Difficulty weighting (training + eval) ---
+DIFFICULTY_TO_LOSS_WEIGHT = {1: 0.90, 2: 1.00, 3: 1.15, 4: 1.35, 5: 1.60}
+DIFFICULTY_TO_EVAL_WEIGHT = {1: 1.00, 2: 1.15, 3: 1.30, 4: 1.50, 5: 1.75}
+
+def _cast_diff(v, default=3):
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+def _meta_block(ex: dict) -> str:
+    """
+    Renders a compact metadata header so the model always sees topic/difficulty.
+    """
+    tags = ex.get("tags", [])
+    if isinstance(tags, list):
+        tags_str = ", ".join(map(str, tags))
+    else:
+        tags_str = str(tags) if tags is not None else ""
+    return (
+        "[META]\n"
+        f"category: {ex.get('category','')}\n"
+        f"subcategory: {ex.get('subcategory','')}\n"
+        f"topic: {ex.get('topic','')}\n"
+        f"content_type: {ex.get('content_type','')}\n"
+        f"difficulty: {ex.get('difficulty','')}\n"
+        f"tags: {tags_str}\n"
+        "[/META]\n\n"
+    )
+
+def _extract_between(text: str, open_tag: str, close_tag: str) -> str:
+    import re
+    m = re.search(re.escape(open_tag) + r"(.*?)" + re.escape(close_tag), text, flags=re.DOTALL)
+    return (m.group(1).strip() if m else "").strip()
+
 class _TeeStream:
     """
     Tee writes to console AND finalLog.txt without breaking tqdm/Trainer formatting.
@@ -79,20 +114,31 @@ class _TeeStream:
 
 class SFTTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        # pull labels + weights, do NOT feed weights to model.forward
         labels = inputs.pop("labels")
+        loss_weight = inputs.pop("loss_weight", None)   # [batch]
         outputs = model(**inputs)
         logits = outputs.logits
 
-        # Shift so that tokens < n predict n
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
+        # Shift so tokens < n predict n
+        shift_logits = logits[..., :-1, :].contiguous()      # [B, T-1, V]
+        shift_labels = labels[..., 1:].contiguous()          # [B, T-1]
 
-        # Flatten the tokens
-        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
-        loss = loss_fct(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_labels.view(-1),
-        )
+        # token-level loss
+        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100, reduction="none")
+        token_loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
+                              shift_labels.view(-1))
+        token_loss = token_loss.view(shift_labels.shape)     # [B, T-1]
+
+        valid_mask = (shift_labels != -100).float()
+        per_sample = (token_loss * valid_mask).sum(dim=1) / valid_mask.sum(dim=1).clamp_min(1e-6)  # [B]
+
+        if loss_weight is not None:
+            # normalize so big batches with big weights don't distort scale
+            loss_weight = loss_weight.to(per_sample.device).float().view(-1)
+            loss = (per_sample * loss_weight).sum() / loss_weight.sum().clamp_min(1e-6)
+        else:
+            loss = per_sample.mean()
 
         return (loss, outputs) if return_outputs else loss
 
@@ -150,20 +196,27 @@ def find_token_sequence(token_ids, seq_ids):
 
 def tokenize_function(ex, tokenizer, canonical_assistant_ids):
     """
-    Tokenize a single example and produce input_ids, labels, attention_mask.
-    This function is robust to assistant marker variant: canonical_assistant_ids
-    (a list[int]) is used to locate the assistant-open marker inside the
-    chat-template token list.
+    Builds:
+      - user message = [META] block + original question
+      - assistant = <think>...</think><output>...</output>
+      - returns input_ids / labels / attention_mask / loss_weight (scalar)
     """
 
+    # Difficulty → loss weight
+    diff_int = _cast_diff(ex.get("difficulty", 3))
+    loss_weight = DIFFICULTY_TO_LOSS_WEIGHT.get(diff_int, 1.0)
+
+    # Compose messages with a metadata header so model always sees topic/difficulty
+    user_content = _meta_block(ex) + ex["question"]
     response = f"<think>{ex['think']}</think><output>{ex['output']}</output>"
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": ex["question"]},
+        {"role": "user", "content": user_content},
         {"role": "assistant", "content": response},
     ]
 
-    # Tokenize with chat template (fast tokenizer apply_chat_template)
+    # Tokenize via chat template
     token_ids = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
@@ -172,24 +225,19 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
         max_length=2048,
         truncation=True,
     )
-    # token_ids is list[int]
 
     im_end_marker = tokenizer.encode("<|im_end|>", add_special_tokens=False)
 
-    # Locate assistant-open using canonical_assistant_ids
+    # Locate assistant-open marker
     start_pos = find_token_sequence(token_ids, canonical_assistant_ids)
-
     if start_pos == -1:
-        # fall back to trying both common variants
         cand_with_nl = tokenizer.encode(ASSISTANT_OPEN_WITH_NL, add_special_tokens=False)
-        cand_no_nl = tokenizer.encode(ASSISTANT_OPEN_NO_NL, add_special_tokens=False)
+        cand_no_nl   = tokenizer.encode(ASSISTANT_OPEN_NO_NL, add_special_tokens=False)
         start_pos = find_token_sequence(token_ids, cand_with_nl)
         used_marker = cand_with_nl
         if start_pos == -1:
             start_pos = find_token_sequence(token_ids, cand_no_nl)
             used_marker = cand_no_nl
-        else:
-            used_marker = cand_with_nl
         if start_pos == -1:
             print("❌ Could not find assistant marker in tokens (tokenize_function)")
             tail = token_ids[-120:] if len(token_ids) > 120 else token_ids
@@ -201,30 +249,28 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
 
     start_idx = start_pos + len(used_marker)
 
-    # end marker detection
+    # end marker = stop before <|im_end|>
     end_idx = -1
     for i in range(start_idx, len(token_ids) - len(im_end_marker) + 1):
         if token_ids[i : i + len(im_end_marker)] == im_end_marker:
-            end_idx = i                      # ← stop BEFORE <|im_end|>
+            end_idx = i
             break
     if end_idx == -1:
         end_idx = len(token_ids)
 
-    # Build labels.
+    # Labels
     labels = [-100] * len(token_ids)
 
     if SUPERVISE_OUTPUT_ONLY:
-        # find <output> ... </output> inside assistant span
-        out_open = tokenizer.encode("<output>", add_special_tokens=False)
+        out_open  = tokenizer.encode("<output>", add_special_tokens=False)
         out_close = tokenizer.encode("</output>", add_special_tokens=False)
         start_out = find_token_sequence(token_ids[start_idx:end_idx], out_open)
-        end_out = find_token_sequence(token_ids[start_idx:end_idx], out_close)
+        end_out   = find_token_sequence(token_ids[start_idx:end_idx], out_close)
         if start_out != -1 and end_out != -1:
             o_s = start_idx + start_out
             o_e = start_idx + end_out + len(out_close)
             labels[o_s:o_e] = token_ids[o_s:o_e]
         else:
-            # fallback to supervising entire assistant span
             labels[start_idx:end_idx] = token_ids[start_idx:end_idx]
             debug("Could not find explicit <output> tags — supervising whole assistant span")
     else:
@@ -232,20 +278,13 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
 
     attention_mask = [1] * len(token_ids)
 
-    # Print only a few sample debugs to avoid spamming logs on big datasets
-    global _DEBUG_SEEN
-    if DEBUG and _DEBUG_SEEN < DEBUG_SAMPLE_LIMIT:
-        import random
-        if (not DEBUG_SAMPLE_RANDOM) or (random.random() < DEBUG_SAMPLE_PROB):
-            dec_labels = tokenizer.decode([t for t in labels if t != -100], skip_special_tokens=False)
-            dec_input = tokenizer.decode(token_ids, skip_special_tokens=False)
-            debug("=== Tokenize fn sample debug ===")
-            debug(f"Decoded labels (trimmed): {dec_labels}")
-            debug(f"Decoded input tail: {dec_input[-300:]}")
-            debug(f"start_idx={start_idx} end_idx={end_idx} used_marker={tokenizer.convert_ids_to_tokens(used_marker)}")
-            _DEBUG_SEEN += 1
-
-    return {"input_ids": token_ids, "labels": labels, "attention_mask": attention_mask}
+    # Return loss_weight as a scalar (per sample)
+    return {
+        "input_ids": token_ids,
+        "labels": labels,
+        "attention_mask": attention_mask,
+        "loss_weight": loss_weight,
+    }
 
 
 def format_and_tokenize(messages, tokenizer, return_tensors=False, add_generation_prompt=False, canonical_assistant_ids=None):
@@ -295,6 +334,34 @@ def format_and_tokenize(messages, tokenizer, return_tensors=False, add_generatio
 
     return formatted_text, tokenized
 
+def build_bad_words_ids(tokenizer):
+    bad = [
+        "<|im_start|>", "<|assistant|>", "<|user|>", "<|system|>",
+        "<|im_im|>", "[META]", "[/META]"
+    ]
+    out = []
+    for s in bad:
+        ids = tokenizer.encode(s, add_special_tokens=False)
+        if ids: out.append(ids)
+    return out
+
+def build_stop_sequences(tokenizer):
+    # primary
+    stops = ["</output>", "</output>\n", "</output>\n\n"]
+    # chat/template enders frequently seen with Qwen-like models
+    stops += ["<|im_end|>", "<|endoftext|>", "<｜end▁of▁sentence｜>"]
+    seqs = []
+    for s in stops:
+        ids = tokenizer.encode(s, add_special_tokens=False)
+        if ids: seqs.append(ids)
+    # de-dup by tuple
+    uniq = []
+    seen = set()
+    for ids in seqs:
+        t = tuple(ids)
+        if t not in seen:
+            uniq.append(ids); seen.add(t)
+    return uniq
 
 def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids=None, label="Eval", mode="auto"):
     """
@@ -322,19 +389,20 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
         inputs = tokenizer([formatted_text], return_tensors="pt")
         inputs = {k: v.to(model_device) for k, v in inputs.items()}
 
-    stop_out   = tokenizer.encode("</output>", add_special_tokens=False)
-    stop_imend = tokenizer.encode("<|im_end|>", add_special_tokens=False)
+    bad_words_ids = build_bad_words_ids(tokenizer)
+    stop_sequences = build_stop_sequences(tokenizer)
 
     with torch.inference_mode():
         output = model.generate(
             **inputs,
             do_sample=False,
             max_new_tokens=192,
-            stopping_criteria=StoppingCriteriaList([StopSequenceCriteria([stop_out, stop_imend])]),
+            stopping_criteria=StoppingCriteriaList([StopSequenceCriteria(stop_sequences)]),
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            no_repeat_ngram_size=4,      # ← stronger anti-repeat
-            repetition_penalty=1.05,     # ← mild penalty
+            no_repeat_ngram_size=4,
+            repetition_penalty=1.05,
+            bad_words_ids=bad_words_ids,
         )
 
     input_len = inputs["input_ids"].shape[1]
@@ -421,7 +489,6 @@ def load_model_and_prepare_for_qora(tokenizer, output_dir: Path):
     model.generation_config.do_sample = False
     model.generation_config.temperature = 1.0
     model.generation_config.top_p = 1.0
-    model.generation_config.top_k = 0
     model.config.use_cache = False
 
     end = time()
@@ -433,56 +500,90 @@ def load_model_and_prepare_for_qora(tokenizer, output_dir: Path):
 
 
 def is_structured_output(text: str) -> bool:
-    # Try to isolate the assistant chunk if present, else just scan tail
     m = re.search(r"<\|im_start\|><\|assistant\|>\s*(.*)", text, re.DOTALL)
     segment = m.group(1) if m else text
-    return all(tag in segment for tag in ("<think>", "</think>", "<output>", "</output>"))
+    has_think  = ("<think>" in segment and "</think>" in segment)
+    has_output = ("<output>" in segment and "</output>" in segment)
+    return has_output or has_think
 
 
 class EvalCallback(TrainerCallback):
-    def __init__(self, tokenizer, canonical_assistant_ids, output_dir, interval):
+    def __init__(self, tokenizer, canonical_assistant_ids, output_dir, interval, raw_dataset):
         self.tokenizer = tokenizer
         self.canonical_assistant_ids = canonical_assistant_ids
         self.interval = interval
         self.output_dir = Path(output_dir)
         self.logs_dir = self.output_dir / "logs"
         self.logs_dir.mkdir(exist_ok=True, parents=True)
-    
-    def _pick_eval_question(self, state):
-        """
-        Pick an evaluation question based on the current global step.
-        This is a simple round-robin selection from EVAL_QUESTIONS.
-        """
-        idx = (state.global_step // self.interval) % len(EVAL_QUESTIONS)
+        self.raw_dataset = raw_dataset
 
-        return EVAL_QUESTIONS[idx]
+    def _pick_eval_sample(self, state):
+        import random
+        # bias sampling by difficulty weight so we see harder items more
+        weights = []
+        for ex in self.raw_dataset:
+            d = _cast_diff(ex.get("difficulty", 3))
+            weights.append(DIFFICULTY_TO_EVAL_WEIGHT.get(d, 1.0))
+        idx = random.choices(range(len(self.raw_dataset)), weights=weights, k=1)[0]
+        return self.raw_dataset[idx]
+
+    def _score_output(self, pred_text: str, ref_text: str, diff: int):
+        # grab <output>...</output>
+        pred_out = _extract_between(pred_text, "<output>", "</output>")
+        # quick lexical F1 (casefold + simple tokenization)
+        import re
+        tok = lambda s: re.findall(r"[a-z0-9]+", s.casefold())
+        p = tok(pred_out)
+        r = tok(ref_text or "")
+        if not p and not r:
+            f1 = 1.0
+        elif not p or not r:
+            f1 = 0.0
+        else:
+            ps, rs = set(p), set(r)
+            inter = len(ps & rs)
+            prec = inter / max(len(ps), 1)
+            rec  = inter / max(len(rs), 1)
+            f1 = (2*prec*rec)/(prec+rec+1e-9)
+
+        struct = 1.0 if is_structured_output(pred_text) else 0.0
+        base = 0.2*struct + 0.8*f1
+        return base * DIFFICULTY_TO_EVAL_WEIGHT.get(diff, 1.0), {"f1": f1, "structured": struct}
 
     def on_step_end(self, args, state, control, **kwargs):
         if state.global_step % self.interval != 0:
             return
-        
-        log(f"🔬 Running evaluation at step {state.global_step}...")
+
+        ex = self._pick_eval_sample(state)
+        diff = _cast_diff(ex.get("difficulty", 3))
+        user_content = _meta_block(ex) + ex["question"]
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": self._pick_eval_question(state)},
+            {"role": "user", "content": user_content},
         ]
 
-        mode = "force_think" if state.global_step < 100 else "auto"
-
+        mode = "force_think" if state.global_step < 1200 else "auto"
         output_str = run_generation_and_print(
-            kwargs["model"],
-            self.tokenizer,
-            messages,
+            kwargs["model"], self.tokenizer, messages,
             canonical_assistant_ids=self.canonical_assistant_ids,
-            label=f"Eval @ step {state.global_step}",
+            label=f"Eval @ step {state.global_step} (diff={diff})",
             mode=mode
         )
 
-        log_dict = state.log_history[-1] if state.log_history else {}
+        # score
+        score, parts = self._score_output(output_str, ex.get("output",""), diff)
+
+        log_dict = dict(state.log_history[-1]) if state.log_history else {}
+        log_dict.update({
+            "eval_difficulty": diff,
+            "eval_score_weighted": round(float(score), 4),
+            "eval_f1": round(float(parts["f1"]), 4),
+            "eval_structured": float(parts["structured"]),
+        })
         metrics_str = f"Metrics: {json.dumps(log_dict, indent=2)}\n\n"
         log_file = self.logs_dir / f"callback-{state.global_step}.txt"
-        
+
         with open(log_file, "w", encoding="utf-8") as f:
             f.write(metrics_str)
             f.write(output_str)
@@ -496,7 +597,7 @@ class EvalCallback(TrainerCallback):
             pass
 
 
-def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids):
+def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset):
     log("Configuring training arguments...")
     pylog.getLogger("accelerate").setLevel(pylog.INFO)
     pylog.getLogger("peft").setLevel(pylog.INFO)
@@ -509,7 +610,7 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids):
     model.config.use_cache = False
 
     def pad_collator(features):
-        # flatten & pad manually
+        # flatten & pad manually for seq fields; keep loss_weight as scalar
         def flatten1d(x):
             if hasattr(x, "flatten"):
                 x = x.flatten()
@@ -519,23 +620,37 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids):
                 x = [item for sublist in x for item in sublist]
             return x
 
+        seq_keys = ["input_ids", "labels", "attention_mask"]
         max_len = max(len(flatten1d(f["input_ids"])) for f in features)
-        batch = {k: [] for k in features[0]}
+
+        batch = {k: [] for k in seq_keys}
+        loss_weights = []
+
         for f in features:
-            for k, v in f.items():
+            for k in seq_keys:
                 pad_token = tokenizer.pad_token_id if k != "labels" else -100
-                v = flatten1d(v)
+                v = flatten1d(f[k])
                 arr = v + [pad_token] * (max_len - len(v))
                 batch[k].append(arr)
-        return {k: torch.tensor(v, dtype=torch.long if k != "labels" else torch.int64) for k, v in batch.items()}
+            lw = float(f.get("loss_weight", 1.0))
+            loss_weights.append(lw)
+
+        out = {
+            "input_ids": torch.tensor(batch["input_ids"], dtype=torch.long),
+            "labels": torch.tensor(batch["labels"], dtype=torch.long),
+            "attention_mask": torch.tensor(batch["attention_mask"], dtype=torch.long),
+            "loss_weight": torch.tensor(loss_weights, dtype=torch.float32),
+        }
+        return out
 
     training_args = TrainingArguments(
         output_dir=output_dir,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=8,
-        num_train_epochs=14,
+        num_train_epochs=10,
         # max_steps=260,
-        learning_rate=2e-5,
+        # learning_rate=2e-5,
+        learning_rate=5e-5,
         weight_decay=0.01,
         warmup_ratio=0.3,
         logging_steps=10,
@@ -556,7 +671,7 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids):
         args=training_args,
         train_dataset=dataset,
         data_collator=pad_collator,
-        callbacks=[EvalCallback(tokenizer, canonical_assistant_ids, output_dir, interval=20)],
+        callbacks=[EvalCallback(tokenizer, canonical_assistant_ids, output_dir, interval=50, raw_dataset=train_dataset)],
     )
 
     trainer.train()
@@ -704,11 +819,15 @@ def main():
     dataset = load_dataset("json", data_files=DATA_PATH, split="train")
     print("Sample dataset entry:", dataset[0])
 
+    train_dataset = dataset
+
     # Map dataset with our tokenize_function wrapper that uses canonical ids
     def map_fn(ex):
         return tokenize_function(ex, tokenizer, canonical_assistant_ids)
 
-    dataset = dataset.map(map_fn, remove_columns=["id", "topic", "question", "think", "output"], batched=False)
+    # Remove every original column except the model features we just produced
+    remove_cols = [c for c in dataset.column_names if c not in ("input_ids","labels","attention_mask","loss_weight")]
+    dataset = dataset.map(map_fn, remove_columns=remove_cols, batched=False)
     print(f"Dataset loaded with {len(dataset)} examples.")
     print("Sample tokenized example:", dataset[0])
 
@@ -719,7 +838,7 @@ def main():
     model = load_model_and_prepare_for_qora(tokenizer, output_dir)
 
     log("Training model")
-    train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids)
+    train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset)
 
     log("Testing training with a small dataset")
     test_training()

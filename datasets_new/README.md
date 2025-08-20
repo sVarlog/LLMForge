@@ -121,6 +121,48 @@ datasets_new/
 
 ---
 
+## Troubleshooting: JSON type consistency
+
+If you see errors like:
+
+```
+pyarrow.lib.ArrowInvalid: JSON parse error: Column(/difficulty) changed from string to number in row 150
+```
+
+This means one or more rows in `train_data.jsonl` have inconsistent types for the same field (commonly `difficulty`). The data loader (pandas/pyarrow) requires consistent column types across rows.
+
+What we changed:
+
+-   `build_train_jsonl.py` now coerces `difficulty` into an integer (mapping common text values like `easy/medium/hard`) to keep types stable.
+
+How to repair an existing file quickly:
+
+1. Inspect the offending row (the log usually shows row index). Use a JSONL-aware tool or a small script to print row 150.
+2. Convert string difficulty values to integers. Example quick fix in Python:
+
+```python
+from pathlib import Path
+import json
+
+path = Path('datasets_new/train_data.jsonl')
+fixed = []
+for i, line in enumerate(path.read_text(encoding='utf-8').splitlines(), start=1):
+    obj = json.loads(line)
+    try:
+        obj['difficulty'] = int(obj.get('difficulty', 3))
+    except Exception:
+        mapping = {'easy': 1, 'medium': 3, 'hard': 5}
+        val = str(obj.get('difficulty', '')).strip().lower()
+        obj['difficulty'] = mapping.get(val, 3)
+    fixed.append(json.dumps(obj, ensure_ascii=False))
+
+path.write_text('\n'.join(fixed), encoding='utf-8')
+```
+
+3. Re-run your training. If you still see parsing errors, repeat the inspection for any other fields mentioned in the error.
+
+---
+
 ## See Also
 
 -   For more details on the data format, see the schema files in `schemas/`.
