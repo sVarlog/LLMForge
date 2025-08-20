@@ -6,7 +6,7 @@
                 "How can AI reduce manual work in order processing without hurting QA?",
                 "What KPI framework proves ROI for an AI customer-support assistant?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["automation", "ops", "decision support", "ROI"]
         },
         "coding_development": {
@@ -15,7 +15,7 @@
                 "When is AI code generation safe to use in a TypeScript monorepo?",
                 "Design an AI-assisted CI step that blocks insecure dependencies."
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["programming", "devtools", "testing", "security"]
         },
         "design_creativity": {
@@ -24,7 +24,7 @@
                 "How can designers enforce brand consistency with generative imagery?",
                 "What’s a robust review workflow for AI-generated product mockups?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["genai", "brand", "ux", "creative"]
         },
         "education": {
@@ -33,7 +33,7 @@
                 "Design an adaptive quiz system that keeps student frustration low.",
                 "How do we detect and mitigate AI-enabled plagiarism fairly?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["edtech", "adaptive learning", "assessment"]
         },
         "ethics_bias": {
@@ -42,7 +42,7 @@
                 "Compare DP vs EO as fairness metrics for a hiring model.",
                 "What human-in-the-loop checkpoints reduce harm in content moderation?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["FAT", "governance", "safety", "audit"]
         },
         "healthcare": {
@@ -51,7 +51,7 @@
                 "What validation steps are required before deploying an AI triage tool?",
                 "How to minimize false negatives in radiology assistance systems?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["clinical", "diagnostics", "regulatory"]
         },
         "natural_language_processing": {
@@ -60,7 +60,7 @@
                 "How would you design an RAG pipeline with verifiable citations?",
                 "What guardrails prevent prompt injection in a customer chatbot?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["rag", "summarization", "chatbots", "security"]
         },
         "research_innovation": {
@@ -69,7 +69,7 @@
                 "Which evals best detect reasoning regressions after quantization?",
                 "Outline a small-scale ablation to isolate tokenizer effects on output format."
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["sota", "evals", "training", "ablation"]
         },
         "robotics_autonomous_systems": {
@@ -78,7 +78,7 @@
                 "How do you fuse vision and lidar for robust obstacle avoidance?",
                 "What failsafes limit damage from model drift in warehouse robotics?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["perception", "planning", "control", "safety"]
         }
     },
@@ -89,7 +89,7 @@
                 "How would you value a pre-revenue SaaS with strong retention?",
                 "When does venture debt beat equity for a growing startup?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["valuation", "funding", "IR"]
         },
         "human_resources": {
@@ -98,7 +98,7 @@
                 "What’s a fair promo rubric for senior engineers in a flat org?",
                 "Design a sourcing funnel that reduces bias without killing speed."
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["hiring", "perf", "compensation", "culture"]
         },
         "innovation_r_and_d": {
@@ -107,7 +107,7 @@
                 "Set up an innovation accounting framework for deep-tech bets.",
                 "How can you derisk a hardware prototype before scaling?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["r&d", "prototyping", "experimentation"]
         },
         "leadership_management": {
@@ -116,7 +116,7 @@
                 "Which decision framework fits a high-uncertainty roadmap?",
                 "How do you run a blameless postmortem that still drives change?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["org", "process", "decision-making"]
         },
         "marketing_branding": {
@@ -125,7 +125,7 @@
                 "Craft a positioning matrix for a privacy-first analytics tool.",
                 "How do you measure brand lift from a PR campaign credibly?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["positioning", "messaging", "pr"]
         },
         "operations_efficiency": {
@@ -134,7 +134,7 @@
                 "Map a fulfillment process that cuts lead time by 30%.",
                 "What metrics catch hidden bottlenecks in back-office ops?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["lean", "throughput", "SLA", "costs"]
         },
         "risk_compliance": {
@@ -143,7 +143,7 @@
                 "Propose a risk register for a fintech launching in the EU.",
                 "How should incident severity be defined for consistent responses?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["regulation", "audit", "incident-response"]
         },
         "sales_customer_relationships": {
@@ -152,7 +152,7 @@
                 "Design a MEDDICC-aligned discovery checklist for enterprise sales.",
                 "What signals predict churn early for B2B SaaS?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["sales", "crm", "retention", "expansion"]
         },
         "strategy_planning": {
@@ -161,7 +161,7 @@
                 "How do you build a moat for a commoditized LLM service?",
                 "What’s a sane cadence for revisiting strategic bets?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["moats", "roadmap", "allocation"]
         },
         "sustainability_csr": {
@@ -170,7 +170,7 @@
                 "Which ESG disclosures are material for a hardware startup?",
                 "How do you align sustainability targets with unit economics?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["esg", "impact", "reporting"]
         }
     },
@@ -181,7 +181,7 @@
                 "What governance model limits dual-use harms in open releases?",
                 "How should consent be handled for synthetic data training?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["ai", "governance", "dual-use", "consent"]
         },
         "business_ethics": {
@@ -190,7 +190,7 @@
                 "What’s an ethical escalation path for revenue recognition pressure?",
                 "How do you structure whistleblower protections that actually work?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["governance", "integrity", "whistleblowing"]
         },
         "medical_ethics": {
@@ -199,7 +199,7 @@
                 "When is it ethical to override a patient’s refusal of care?",
                 "What safeguards are required in an adaptive clinical trial?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["consent", "clinical", "research"]
         },
         "environmental_ethics": {
@@ -208,7 +208,7 @@
                 "How should carbon offsets be audited to avoid greenwashing?",
                 "What ethical principles apply to geoengineering trials?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["climate", "sustainability", "justice"]
         },
         "data_privacy_and_security": {
@@ -217,7 +217,7 @@
                 "Design a privacy-by-default onboarding flow for a mobile app.",
                 "What’s a proportionate response to a minor PII breach?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["privacy", "security", "gdpr"]
         },
         "research_ethics": {
@@ -226,7 +226,7 @@
                 "How should authorship be assigned in large multi-lab studies?",
                 "Which checks ensure reproducibility before publication?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["integrity", "reproducibility", "authorship"]
         },
         "political_and_governance_ethics": {
@@ -235,7 +235,7 @@
                 "Which transparency rules reduce capture in regulatory agencies?",
                 "How do you limit undue influence from lobbyists without chilling speech?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["governance", "transparency", "lobbying"]
         },
         "bioethics": {
@@ -244,7 +244,7 @@
                 "What safeguards are ethical for embryo editing research?",
                 "When is life-extension research ethically permissible to trial?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["genetics", "enhancement", "end-of-life"]
         },
         "media_and_journalism_ethics": {
@@ -253,7 +253,7 @@
                 "When should outlets publish hacked materials, if ever?",
                 "How to disclose AI-generated content in investigative reporting?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["accuracy", "sources", "disclosure"]
         },
         "consumer_rights": {
@@ -262,7 +262,7 @@
                 "What disclosures are necessary for subscription auto-renewals?",
                 "Design a dispute process that doesn’t penalize low-literacy users."
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["fairness", "disclosure", "redress"]
         }
     },
@@ -273,7 +273,7 @@
                 "How should a 25-year-old balance debt payoff vs investing?",
                 "What’s a simple rule to size emergency funds by risk profile?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["budgeting", "debt", "retirement"]
         },
         "corporate_finance": {
@@ -282,7 +282,7 @@
                 "When does issuing convertibles make sense for mid-stage SaaS?",
                 "How do you project free cash flow for a subscription business?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["cost-of-capital", "fcf", "structure"]
         },
         "investing": {
@@ -291,7 +291,7 @@
                 "What risks do investors ignore when chasing high dividend yield?",
                 "How would you size a crypto allocation for a conservative portfolio?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["portfolio", "risk", "crypto", "factors"]
         },
         "banking_and_payments": {
@@ -300,7 +300,7 @@
                 "Compare settlement risk across RTGS and ACH-like systems.",
                 "What controls reduce fraud in instant P2P transfers?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["fintech", "rails", "fraud"]
         },
         "risk_management": {
@@ -309,7 +309,7 @@
                 "Design a VAR-plus-scenarios regime for a multi-asset book.",
                 "When is insurance superior to derivatives for hedging tail risk?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["hedging", "var", "governance"]
         },
         "macroeconomics": {
@@ -318,7 +318,7 @@
                 "How do rate hikes propagate to small business credit supply?",
                 "What indicators lead recessions most reliably?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["inflation", "rates", "cycles"]
         },
         "microeconomics": {
@@ -327,7 +327,7 @@
                 "When is price discrimination welfare-enhancing?",
                 "How do two-sided networks complicate pricing power?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["incentives", "pricing", "competition"]
         },
         "international_finance": {
@@ -336,7 +336,7 @@
                 "What drives sudden stops in emerging markets?",
                 "How do currency mismatches amplify crises?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["fx", "flows", "sovereign"]
         },
         "taxation": {
@@ -345,7 +345,7 @@
                 "When do controlled foreign corporation rules apply?",
                 "How do stock options change effective tax rates for employees?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["personal", "corporate", "intl"]
         },
         "sustainable_finance": {
@@ -354,7 +354,7 @@
                 "How should green bond proceeds be tracked credibly?",
                 "What metrics prove impact beyond marketing claims?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["esg", "impact", "green-bonds"]
         }
     },
@@ -365,7 +365,7 @@
                 "Explain rain shadow effects with a real-world example.",
                 "How do ocean currents shape regional climate variability?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["climate", "geomorphology", "biomes"]
         },
         "human_geography": {
@@ -374,7 +374,7 @@
                 "What push–pull factors drive rural-to-urban migration?",
                 "How do megacities reshape regional resource use?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["demography", "urban", "culture"]
         },
         "political_geography": {
@@ -383,7 +383,7 @@
                 "What geographic features commonly define stable borders?",
                 "How do resource corridors affect regional power balances?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["borders", "conflict", "geopolitics"]
         },
         "economic_geography": {
@@ -392,7 +392,7 @@
                 "Why do certain industries cluster into hubs?",
                 "How do ports and rail shape national trade patterns?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["trade", "industry", "transport"]
         },
         "cultural_geography": {
@@ -401,7 +401,7 @@
                 "What drives linguistic diversity hotspots?",
                 "How do religions shape settlement patterns historically?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["language", "religion", "heritage"]
         },
         "environmental_geography": {
@@ -410,7 +410,7 @@
                 "Which biomes are most vulnerable to warming and why?",
                 "How should protected areas be designed for connectivity?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["conservation", "hazards", "climate"]
         },
         "cartography_and_gis": {
@@ -419,7 +419,7 @@
                 "When do equal-area projections matter most?",
                 "Design a GIS workflow to detect illegal deforestation."
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["mapping", "gis", "spatial"]
         },
         "regional_studies": {
@@ -428,7 +428,7 @@
                 "Compare urbanization in Southeast Asia vs Sub-Saharan Africa.",
                 "How has the EU altered trade flows in Central Europe?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["regions", "comparative", "trade"]
         },
         "disaster_geography": {
@@ -437,7 +437,7 @@
                 "What data supports flood risk zoning most reliably?",
                 "How should coastal cities prioritize resilience investments?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["hazards", "resilience", "recovery"]
         },
         "agricultural_geography": {
@@ -446,7 +446,7 @@
                 "Which irrigation strategies fit arid smallholder regions?",
                 "How do soil types constrain crop selection regionally?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["farming", "food-security", "resources"]
         }
     },
@@ -457,7 +457,7 @@
                 "What early signals indicate PPC spend is being wasted?",
                 "Design a lifecycle email sequence for a freemium SaaS."
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["seo", "ppc", "lifecycle", "analytics"]
         },
         "content_marketing": {
@@ -466,7 +466,7 @@
                 "How do you pick formats that compound SEO authority?",
                 "Which KPIs best reflect content-led pipeline?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["editorial", "distribution", "measurement"]
         },
         "social_media_marketing": {
@@ -475,7 +475,7 @@
                 "How should B2B allocate effort across LinkedIn vs X?",
                 "What governance prevents off-brand viral attempts?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["community", "platforms", "ugc", "creators"]
         },
         "branding_and_positioning": {
@@ -484,7 +484,7 @@
                 "Craft a category POV for a developer-first AI toolkit.",
                 "How to test if a new tagline actually shifts perception?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["identity", "narrative", "category"]
         },
         "market_research": {
@@ -493,7 +493,7 @@
                 "Design a survey to validate an ICP hypothesis.",
                 "When should you prefer van Westendorp over Gabor–Granger?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["research", "pricing", "icp"]
         },
         "advertising": {
@@ -502,7 +502,7 @@
                 "How do you separate creative fatigue from audience saturation?",
                 "What experiments isolate incremental lift across channels?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["creative", "media", "attribution"]
         },
         "influencer_marketing": {
@@ -511,7 +511,7 @@
                 "How should you price a micro-influencer package?",
                 "What disclosures are mandatory for affiliate content?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["creators", "contracts", "roi", "disclosure"]
         },
         "product_marketing": {
@@ -520,7 +520,7 @@
                 "What does a high-signal beta program look like?",
                 "How do you align PMM messaging with sales discovery?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["gtm", "launch", "enablement"]
         },
         "customer_experience_cx": {
@@ -529,7 +529,7 @@
                 "Map a first-week onboarding that lifts activation by 20%.",
                 "Which CX metrics predict churn best in self-serve SaaS?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["onboarding", "personalization", "churn"]
         },
         "event_marketing": {
@@ -538,7 +538,7 @@
                 "How do you attribute pipeline to a flagship conference?",
                 "What makes a webinar series sustain attendance past novelty?"
             ],
-            "content_type": ["qa", "reasoning"],
+            "content_type": ["reasoning"],
             "tags": ["events", "webinars", "community", "attribution"]
         }
     }

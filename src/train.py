@@ -336,7 +336,7 @@ def format_and_tokenize(messages, tokenizer, return_tensors=False, add_generatio
 
 def build_bad_words_ids(tokenizer):
     bad = [
-        "<|im_start|>", "<|assistant|>", "<|user|>", "<|system|>",
+        "<|im_start|>", "<|im_end|>", "<|assistant|>", "<|user|>", "<|system|>",
         "<|im_im|>", "[META]", "[/META]"
     ]
     out = []
@@ -344,24 +344,6 @@ def build_bad_words_ids(tokenizer):
         ids = tokenizer.encode(s, add_special_tokens=False)
         if ids: out.append(ids)
     return out
-
-def build_stop_sequences(tokenizer):
-    # primary
-    stops = ["</output>", "</output>\n", "</output>\n\n"]
-    # chat/template enders frequently seen with Qwen-like models
-    stops += ["<|im_end|>", "<|endoftext|>", "<｜end▁of▁sentence｜>"]
-    seqs = []
-    for s in stops:
-        ids = tokenizer.encode(s, add_special_tokens=False)
-        if ids: seqs.append(ids)
-    # de-dup by tuple
-    uniq = []
-    seen = set()
-    for ids in seqs:
-        t = tuple(ids)
-        if t not in seen:
-            uniq.append(ids); seen.add(t)
-    return uniq
 
 def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids=None, label="Eval", mode="auto"):
     """
@@ -389,15 +371,20 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
         inputs = tokenizer([formatted_text], return_tensors="pt")
         inputs = {k: v.to(model_device) for k, v in inputs.items()}
 
+    stop_out    = tokenizer.encode("</output>", add_special_tokens=False)
+    stop_imend  = tokenizer.encode("<|im_end|>", add_special_tokens=False)
+    stop_imstrt = tokenizer.encode("<|im_start|>", add_special_tokens=False)
+    stop_asst   = tokenizer.encode("<|assistant|>", add_special_tokens=False)
     bad_words_ids = build_bad_words_ids(tokenizer)
-    stop_sequences = build_stop_sequences(tokenizer)
 
     with torch.inference_mode():
         output = model.generate(
             **inputs,
             do_sample=False,
             max_new_tokens=192,
-            stopping_criteria=StoppingCriteriaList([StopSequenceCriteria(stop_sequences)]),
+            stopping_criteria=StoppingCriteriaList([StopSequenceCriteria(
+                [stop_out, stop_imend, stop_imstrt, stop_asst]
+            )]),
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
             no_repeat_ngram_size=4,
@@ -489,6 +476,7 @@ def load_model_and_prepare_for_qora(tokenizer, output_dir: Path):
     model.generation_config.do_sample = False
     model.generation_config.temperature = 1.0
     model.generation_config.top_p = 1.0
+    model.generation_config.top_k = 0
     model.config.use_cache = False
 
     end = time()
@@ -563,7 +551,7 @@ class EvalCallback(TrainerCallback):
             {"role": "user", "content": user_content},
         ]
 
-        mode = "force_think" if state.global_step < 1200 else "auto"
+        mode = "force_think" if state.global_step < 100 else "auto"
         output_str = run_generation_and_print(
             kwargs["model"], self.tokenizer, messages,
             canonical_assistant_ids=self.canonical_assistant_ids,
@@ -649,8 +637,7 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
         gradient_accumulation_steps=8,
         num_train_epochs=10,
         # max_steps=260,
-        # learning_rate=2e-5,
-        learning_rate=5e-5,
+        learning_rate=2e-5,
         weight_decay=0.01,
         warmup_ratio=0.3,
         logging_steps=10,
@@ -671,7 +658,7 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
         args=training_args,
         train_dataset=dataset,
         data_collator=pad_collator,
-        callbacks=[EvalCallback(tokenizer, canonical_assistant_ids, output_dir, interval=50, raw_dataset=train_dataset)],
+        callbacks=[EvalCallback(tokenizer, canonical_assistant_ids, output_dir, interval=20, raw_dataset=train_dataset)],
     )
 
     trainer.train()
