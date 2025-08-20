@@ -11,7 +11,8 @@ SYSTEM_PROMPT = (
     "<think>[Your reasoning]</think>\n<output>[Your answer]</output>"
 )
 
-DATA_PATH = "datasets/data.jsonl"
+# DATA_PATH = "datasets/data.jsonl" # Old datasets
+DATA_PATH = "datasets_new/train_data.jsonl"
 OUTPUT_BASE_DIR = Path(f"output/{MODEL_NAME}")
 LORA_CONFIG_PATH = "config/lora_config.json"
 

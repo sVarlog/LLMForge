@@ -40,12 +40,13 @@ def normalize_entry(
         return None
 
     row = {
-        "id": entry.get("id", next_id),
-        "category": category,
-        "subcategory": subcat,
-        "content_type": ctype,
-        "topic": entry.get("topic", fallback_topic),
-        "difficulty": entry.get("difficulty", 3),
+    "id": entry.get("id", next_id),
+    "category": category,
+    "subcategory": subcat,
+    "content_type": ctype,
+    "topic": entry.get("topic", fallback_topic),
+    # Coerce difficulty to an int for consistent column typing across the JSONL
+    "difficulty": None,
         "question": q,
         "think": think if think is not None else "",
         "output": out,
@@ -53,6 +54,22 @@ def normalize_entry(
         "tags": list(dict.fromkeys((entry.get("tags") or []) + (meta_tags or []))),
         "source_version": source_version,
     }
+    # Normalize difficulty into an int (datasets/pyarrow expects consistent types)
+    raw_diff = entry.get("difficulty", 3)
+    try:
+        diff = int(raw_diff)
+    except Exception:
+        # allow common text values, otherwise fallback to default 3
+        if isinstance(raw_diff, str):
+            v = raw_diff.strip().lower()
+            mapping = {"easy": 1, "medium": 3, "hard": 5}
+            diff = mapping.get(v, 3)
+            if v not in mapping:
+                print(f"⚠️ Non-numeric difficulty '{raw_diff}' in {category}/{subcat}/{ctype}, using {diff}")
+        else:
+            diff = 3
+
+    row["difficulty"] = diff
     return row
 
 def export_jsonl(output_path, rows):
