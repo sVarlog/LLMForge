@@ -25,6 +25,7 @@ from tokenizers import Tokenizer
 from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training
 from config.config import MODEL_NAME
 
+from src.helpers.build_messages import build_messages
 from src.helpers.loggers import log, debug
 from config.training_config import (
     SYSTEM_PROMPT,
@@ -201,11 +202,7 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
     user_content = _meta_block(ex) + ex["question"]
     response = f"<think>{ex['think']}</think><output>{ex['output']}</output>"
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-        {"role": "assistant", "content": response},
-    ]
+    messages = build_messages(SYSTEM_PROMPT, user_content, response)
 
     # Tokenize via chat template
     token_ids = tokenizer.apply_chat_template(
@@ -541,10 +538,7 @@ class EvalCallback(TrainerCallback):
         diff = _cast_diff(ex.get("difficulty", 3))
         user_content = _meta_block(ex) + ex["question"]
 
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
+        messages = build_messages(SYSTEM_PROMPT, user_content)
 
         mode = "force_think" if state.global_step < 100 else "auto"
         output_str = run_generation_and_print(
@@ -691,7 +685,9 @@ def test_training():
     examples = ["2+2?"]
     for i, question in enumerate(examples, start=1):
         log(f"Processing example {i}: {question}")
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": question}]
+        
+        messages = build_messages(SYSTEM_PROMPT, question)
+        
         run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids=None, label=f"Example {i}", mode="force_think")
 
 
@@ -810,10 +806,10 @@ def main():
     remove_cols = [c for c in dataset.column_names if c not in ("input_ids","labels","attention_mask","loss_weight")]
     dataset = dataset.map(map_fn, remove_columns=remove_cols, batched=False)
     log(f"Dataset loaded with {len(dataset)} examples.")
-    log("Sample tokenized example:", dataset[0])
+    log(f"Sample tokenized example: {dataset[0]}")
 
     stop_ids = tokenizer.encode("</output>", add_special_tokens=False)
-    log("stop ids:", stop_ids, tokenizer.convert_ids_to_tokens(stop_ids))
+    log(f"stop ids: {stop_ids}, {tokenizer.convert_ids_to_tokens(stop_ids)}")
 
     log("Loading model and applying LoRA")
     model = load_model_and_prepare_for_qora(tokenizer, output_dir)
@@ -836,7 +832,6 @@ def main():
             FINAL_LOG_FH.close()
     except Exception:
         pass
-
 
 if __name__ == "__main__":
     main()
