@@ -22,7 +22,7 @@
             "description": "Generative design, creative tools, and AI-assisted ideation.",
             "example_questions": [
                 "How can designers enforce brand consistency with generative imagery?",
-                "What’s a robust review workflow for AI-generated product mockups?"
+                "What's a robust review workflow for AI-generated product mockups?"
             ],
             "content_type": ["reasoning"],
             "tags": ["genai", "brand", "ux", "creative"]
@@ -95,7 +95,7 @@
         "human_resources": {
             "description": "Hiring, performance, culture, compensation, and L&D.",
             "example_questions": [
-                "What’s a fair promo rubric for senior engineers in a flat org?",
+                "What's a fair promo rubric for senior engineers in a flat org?",
                 "Design a sourcing funnel that reduces bias without killing speed."
             ],
             "content_type": ["reasoning"],
@@ -159,7 +159,7 @@
             "description": "Long-term direction, moats, resource allocation, and roadmapping.",
             "example_questions": [
                 "How do you build a moat for a commoditized LLM service?",
-                "What’s a sane cadence for revisiting strategic bets?"
+                "What's a sane cadence for revisiting strategic bets?"
             ],
             "content_type": ["reasoning"],
             "tags": ["moats", "roadmap", "allocation"]
@@ -187,7 +187,7 @@
         "business_ethics": {
             "description": "Corporate conduct, conflicts of interest, and fair practices.",
             "example_questions": [
-                "What’s an ethical escalation path for revenue recognition pressure?",
+                "What's an ethical escalation path for revenue recognition pressure?",
                 "How do you structure whistleblower protections that actually work?"
             ],
             "content_type": ["reasoning"],
@@ -196,7 +196,7 @@
         "medical_ethics": {
             "description": "Consent, autonomy, beneficence, and clinical research ethics.",
             "example_questions": [
-                "When is it ethical to override a patient’s refusal of care?",
+                "When is it ethical to override a patient's refusal of care?",
                 "What safeguards are required in an adaptive clinical trial?"
             ],
             "content_type": ["reasoning"],
@@ -215,7 +215,7 @@
             "description": "Data rights, surveillance limits, breach response, and privacy by design.",
             "example_questions": [
                 "Design a privacy-by-default onboarding flow for a mobile app.",
-                "What’s a proportionate response to a minor PII breach?"
+                "What's a proportionate response to a minor PII breach?"
             ],
             "content_type": ["reasoning"],
             "tags": ["privacy", "security", "gdpr"]
@@ -260,7 +260,7 @@
             "description": "Fair treatment, truthful marketing, returns, and redress mechanisms.",
             "example_questions": [
                 "What disclosures are necessary for subscription auto-renewals?",
-                "Design a dispute process that doesn’t penalize low-literacy users."
+                "Design a dispute process that doesn't penalize low-literacy users."
             ],
             "content_type": ["reasoning"],
             "tags": ["fairness", "disclosure", "redress"]
@@ -271,7 +271,7 @@
             "description": "Budgeting, saving, debt management, insurance, and retirement.",
             "example_questions": [
                 "How should a 25-year-old balance debt payoff vs investing?",
-                "What’s a simple rule to size emergency funds by risk profile?"
+                "What's a simple rule to size emergency funds by risk profile?"
             ],
             "content_type": ["reasoning"],
             "tags": ["budgeting", "debt", "retirement"]

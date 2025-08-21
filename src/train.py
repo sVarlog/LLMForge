@@ -22,9 +22,10 @@ from transformers import (
 )
 from tokenizers import Tokenizer
 
-from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training
+from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training, PeftModel
 from config.config import MODEL_NAME
 
+from src.helpers.build_messages import build_messages
 from src.helpers.loggers import log, debug
 from config.training_config import (
     SYSTEM_PROMPT,
@@ -33,19 +34,17 @@ from config.training_config import (
     LORA_CONFIG_PATH,
     ANCHOR_INTO_OUTPUT,
     SUPERVISE_OUTPUT_ONLY,
-    DEBUG,
-    DEBUG_SAMPLE_LIMIT,
-    DEBUG_SAMPLE_RANDOM,
-    DEBUG_SAMPLE_PROB,
-    _DEBUG_SEEN,
     FINAL_LOG_FH,
     _ORIG_STDOUT,
     _ORIG_STDERR,
-    TEE_ACTIVE,
-    EVAL_QUESTIONS,
     ASSISTANT_OPEN_WITH_NL,
-    ASSISTANT_OPEN_NO_NL
+    ASSISTANT_OPEN_NO_NL,
+    TRAINING_NEW,
+    TRAINING_EPOCHS,
+    TRAINING_EXTRA_EPOCHS,
 )
+
+MAX_LEN=2048
 
 # --- Difficulty weighting (training + eval) ---
 DIFFICULTY_TO_LOSS_WEIGHT = {1: 0.90, 2: 1.00, 3: 1.15, 4: 1.35, 5: 1.60}
@@ -78,7 +77,6 @@ def _meta_block(ex: dict) -> str:
     )
 
 def _extract_between(text: str, open_tag: str, close_tag: str) -> str:
-    import re
     m = re.search(re.escape(open_tag) + r"(.*?)" + re.escape(close_tag), text, flags=re.DOTALL)
     return (m.group(1).strip() if m else "").strip()
 
@@ -142,18 +140,26 @@ class SFTTrainer(Trainer):
 
         return (loss, outputs) if return_outputs else loss
 
-class StopSequenceCriteria(StoppingCriteria):
-     def __init__(self, stop_sequences_ids):
-        self.stop_sequences_ids = stop_sequences_ids
-        self.window = max(len(s) for s in stop_sequences_ids) if stop_sequences_ids else 0
-        self.buf = []
+class StopOnSubstring(StoppingCriteria):
+    def __init__(self, tokenizer, substrings, start_len: int, window_tokens: int = 64):
+        self.tokenizer = tokenizer
+        self.substrings = substrings
+        self.start_len = int(start_len)
+        self.window = window_tokens
 
-     def __call__(self, input_ids, scores, **kwargs):
-        if self.window == 0:
+    def __call__(self, input_ids, scores, **kwargs):
+        # input_ids: tensor [batch, seq_len]
+        seq = input_ids[0].tolist()
+        seq_len = len(seq)
+        # nothing generated yet
+        if seq_len <= self.start_len:
             return False
-        self.buf = input_ids[0].tolist()[-self.window:]
-        for s in self.stop_sequences_ids:
-            if len(self.buf) >= len(s) and self.buf[-len(s):] == s:
+        # take only tokens after prompt start_len (cap to window)
+        tail_start = max(self.start_len, seq_len - self.window)
+        tail = seq[tail_start: seq_len]
+        text = self.tokenizer.decode(tail, skip_special_tokens=False)
+        for sub in self.substrings:
+            if sub in text:
                 return True
         return False
 
@@ -167,6 +173,37 @@ def prepare_output_dir() -> Path:
     return output_dir
 
 
+def find_last_training_dir() -> Path | None:
+    """Return the Path to the last training-N folder or None if none exists."""
+    if not os.path.exists(OUTPUT_BASE_DIR):
+        return None
+    dirs = [d for d in os.listdir(OUTPUT_BASE_DIR) if d.startswith("training-") and os.path.isdir(os.path.join(OUTPUT_BASE_DIR, d))]
+    if not dirs:
+        return None
+    nums = [int(d.split("-")[1]) for d in dirs if d.split("-")[1].isdigit()]
+    if not nums:
+        return None
+    last = max(nums)
+    return OUTPUT_BASE_DIR / f"training-{last}"
+
+
+def find_latest_checkpoint(training_dir: Path) -> Path | None:
+    """Return latest checkpoint folder inside training_dir or None."""
+    if not training_dir or not training_dir.exists():
+        return None
+    chkp_dirs = [p for p in training_dir.iterdir() if p.is_dir() and p.name.startswith("checkpoint-")]
+    if not chkp_dirs:
+        return None
+    # pick highest numeric suffix
+    def _num(p):
+        try:
+            return int(p.name.split("-")[1])
+        except Exception:
+            return -1
+    chkp_dirs.sort(key=_num)
+    return chkp_dirs[-1]
+
+
 def load_and_prepare_tokenizer(output_dir: Path):
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_NAME,
@@ -177,10 +214,6 @@ def load_and_prepare_tokenizer(output_dir: Path):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token or tokenizer.unk_token
 
-    # Quick visibility check
-    test_str = "<think>Test</think><output>Test</output>"
-    test_tokens = tokenizer.tokenize(test_str)
-    print("Tokenization test (no new tokens added):", test_tokens)
     return tokenizer
 
 
@@ -210,11 +243,7 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
     user_content = _meta_block(ex) + ex["question"]
     response = f"<think>{ex['think']}</think><output>{ex['output']}</output>"
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-        {"role": "assistant", "content": response},
-    ]
+    messages = build_messages(SYSTEM_PROMPT, user_content, response)
 
     # Tokenize via chat template
     token_ids = tokenizer.apply_chat_template(
@@ -222,7 +251,7 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
         tokenize=True,
         add_generation_prompt=False,
         return_tensors=None,
-        max_length=2048,
+        max_length=MAX_LEN,
         truncation=True,
     )
 
@@ -230,19 +259,22 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
 
     # Locate assistant-open marker
     start_pos = find_token_sequence(token_ids, canonical_assistant_ids)
+    
     if start_pos == -1:
         cand_with_nl = tokenizer.encode(ASSISTANT_OPEN_WITH_NL, add_special_tokens=False)
         cand_no_nl   = tokenizer.encode(ASSISTANT_OPEN_NO_NL, add_special_tokens=False)
         start_pos = find_token_sequence(token_ids, cand_with_nl)
         used_marker = cand_with_nl
+        
         if start_pos == -1:
             start_pos = find_token_sequence(token_ids, cand_no_nl)
             used_marker = cand_no_nl
         if start_pos == -1:
-            print("❌ Could not find assistant marker in tokens (tokenize_function)")
+            log("❌ Could not find assistant marker in tokens (tokenize_function)")
             tail = token_ids[-120:] if len(token_ids) > 120 else token_ids
-            print("tail ids:", tail)
-            print("tail toks:", tokenizer.convert_ids_to_tokens(tail))
+            log("tail ids:", tail)
+            log("tail toks:", tokenizer.convert_ids_to_tokens(tail))
+
             raise AssertionError("❌ Could not find assistant marker in tokens")
     else:
         used_marker = canonical_assistant_ids
@@ -314,7 +346,7 @@ def format_and_tokenize(messages, tokenizer, return_tensors=False, add_generatio
                     ids_list = ids
             pos = find_token_sequence(ids_list, canonical_assistant_ids)
             if pos == -1:
-                print("⚠️ formatted_text does NOT contain canonical assistant marker")
+                log("⚠️ formatted_text does NOT contain canonical assistant marker")
                 debug("formatted_text repr: " + repr(formatted_text[-200:]))
                 debug("canonical_assistant_ids tokens: " + str(tokenizer.convert_ids_to_tokens(canonical_assistant_ids)))
             else:
@@ -329,20 +361,22 @@ def format_and_tokenize(messages, tokenizer, return_tensors=False, add_generatio
         tokenized = tokenizer(formatted_text, return_tensors="pt", add_special_tokens=False)
     else:
         tokenized = tokenizer(
-            formatted_text, padding="longest", truncation=True, max_length=2048, return_tensors=None, add_special_tokens=False
+            formatted_text, padding="longest", truncation=True, max_length=MAX_LEN, return_tensors=None, add_special_tokens=False
         )
 
     return formatted_text, tokenized
 
 def build_bad_words_ids(tokenizer):
     bad = [
-        "<|im_start|>", "<|im_end|>", "<|assistant|>", "<|user|>", "<|system|>",
+        "<|im_start|>", "<|user|>", "<|system|>",
         "<|im_im|>", "[META]", "[/META]"
     ]
     out = []
+
     for s in bad:
         ids = tokenizer.encode(s, add_special_tokens=False)
         if ids: out.append(ids)
+    
     return out
 
 def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids=None, label="Eval", mode="auto"):
@@ -371,20 +405,18 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
         inputs = tokenizer([formatted_text], return_tensors="pt")
         inputs = {k: v.to(model_device) for k, v in inputs.items()}
 
-    stop_out    = tokenizer.encode("</output>", add_special_tokens=False)
-    stop_imend  = tokenizer.encode("<|im_end|>", add_special_tokens=False)
-    stop_imstrt = tokenizer.encode("<|im_start|>", add_special_tokens=False)
-    stop_asst   = tokenizer.encode("<|assistant|>", add_special_tokens=False)
     bad_words_ids = build_bad_words_ids(tokenizer)
+        
+    prompt_len = inputs["input_ids"].shape[1]
+    stop_subs = ["</output>", "<|im_end|>"]
+    stopping_criteria = StoppingCriteriaList([StopOnSubstring(tokenizer, stop_subs, start_len=prompt_len)])
 
     with torch.inference_mode():
         output = model.generate(
             **inputs,
             do_sample=False,
             max_new_tokens=192,
-            stopping_criteria=StoppingCriteriaList([StopSequenceCriteria(
-                [stop_out, stop_imend, stop_imstrt, stop_asst]
-            )]),
+            stopping_criteria=stopping_criteria,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
             no_repeat_ngram_size=4,
@@ -407,7 +439,6 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
     )
 
     log(f"Is structured output: {is_structured_output(decoded)}")
-    log(f"Is structured output: {is_structured_output(decoded)}")
     
     return out_str
 
@@ -417,20 +448,23 @@ def check_lora_modules(model, lora_config_path: str):
         lora_cfg = LoraConfig(**json.load(f))
     all_module_names = [name for name, _ in model.named_modules()]
     found, missing = [], []
-    print("\n🔍 Checking LoRA target modules against the model…")
+
+    log("Checking LoRA target modules against the model…")
+
     for target in lora_cfg.target_modules:
         matches = [mn for mn in all_module_names if target in mn]
         if matches:
             found.append(target)
             snippet = matches[:3] + (["…"] if len(matches) > 3 else [])
-            print(f"  ✔ `{target}` matched in: {snippet}")
+            log(f"  ✔ `{target}` matched in: {snippet}")
         else:
             missing.append(target)
-            print(f"  ❌ `{target}` NOT found in model modules!")
-    print(f"\n✅ Modules to be LoRA‐tuned : {found}")
+            log(f"  ❌ `{target}` NOT found in model modules!")
+    log(f"✅ Modules to be LoRA‐tuned : {found}")
+
     if missing:
-        print(f"⚠️ Warning: these targets were missing and will be skipped: {missing}")
-    print("==============================================\n")
+        log(f"⚠️ Warning: these targets were missing and will be skipped: {missing}")
+
     return lora_cfg
 
 
@@ -471,6 +505,7 @@ def load_model_and_prepare_for_qora(tokenizer, output_dir: Path):
     log(f"Checking LoRA config at {LORA_CONFIG_PATH}…")
     lora_cfg = check_lora_modules(model, LORA_CONFIG_PATH)
     log("Applying LoRA adapters…")
+    # if output_dir already contains a PEFT adapter, we can load it later via PeftModel.from_pretrained
     model = get_peft_model(model, lora_cfg)
 
     model.generation_config.do_sample = False
@@ -519,7 +554,6 @@ class EvalCallback(TrainerCallback):
         # grab <output>...</output>
         pred_out = _extract_between(pred_text, "<output>", "</output>")
         # quick lexical F1 (casefold + simple tokenization)
-        import re
         tok = lambda s: re.findall(r"[a-z0-9]+", s.casefold())
         p = tok(pred_out)
         r = tok(ref_text or "")
@@ -546,10 +580,7 @@ class EvalCallback(TrainerCallback):
         diff = _cast_diff(ex.get("difficulty", 3))
         user_content = _meta_block(ex) + ex["question"]
 
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
+        messages = build_messages(SYSTEM_PROMPT, user_content)
 
         mode = "force_think" if state.global_step < 100 else "auto"
         output_str = run_generation_and_print(
@@ -585,7 +616,7 @@ class EvalCallback(TrainerCallback):
             pass
 
 
-def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset):
+def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset, resume_from_checkpoint: Path | None = None):
     log("Configuring training arguments...")
     pylog.getLogger("accelerate").setLevel(pylog.INFO)
     pylog.getLogger("peft").setLevel(pylog.INFO)
@@ -635,8 +666,7 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
         output_dir=output_dir,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=8,
-        num_train_epochs=10,
-        # max_steps=260,
+        num_train_epochs=TRAINING_EPOCHS,
         learning_rate=2e-5,
         weight_decay=0.01,
         warmup_ratio=0.3,
@@ -661,7 +691,37 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
         callbacks=[EvalCallback(tokenizer, canonical_assistant_ids, output_dir, interval=20, raw_dataset=train_dataset)],
     )
 
-    trainer.train()
+    if resume_from_checkpoint:
+        # Try to extend epochs when resuming rather than fiddling max_steps.
+        try:
+            ts = Path(resume_from_checkpoint) / "trainer_state.json"
+            if ts.exists():
+                st = json.load(open(ts, "r", encoding="utf-8"))
+                current_epoch = float(st.get("epoch", 0.0) or 0.0)
+            else:
+                current_epoch = 0.0
+        except Exception:
+            current_epoch = 0.0
+
+        # If resuming, extend target epochs by TRAINING_EXTRA_EPOCHS
+        try:
+            original_epochs = float(training_args.num_train_epochs or TRAINING_EPOCHS)
+        except Exception:
+            original_epochs = TRAINING_EPOCHS
+
+        new_target_epochs = current_epoch + TRAINING_EXTRA_EPOCHS
+
+        if new_target_epochs <= original_epochs:
+            pass # No alternative calculation; assignment above is sufficient
+
+        log(f"Resuming from checkpoint. current_epoch={current_epoch:.2f}, setting num_train_epochs -> {new_target_epochs:.2f}")
+        training_args.num_train_epochs = new_target_epochs
+
+        # re-create trainer with updated args so the Trainer picks up the new epoch target
+        trainer.args = training_args
+        trainer.train(resume_from_checkpoint=str(resume_from_checkpoint))
+    else:
+        trainer.train()
     model.save_pretrained(output_dir)
 
 
@@ -696,13 +756,30 @@ def test_training():
     examples = ["2+2?"]
     for i, question in enumerate(examples, start=1):
         log(f"Processing example {i}: {question}")
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": question}]
+        
+        messages = build_messages(SYSTEM_PROMPT, question)
+        
         run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids=None, label=f"Example {i}", mode="force_think")
 
 
 def main():
     log("Preparing output directory")
-    output_dir = prepare_output_dir()
+    resume_checkpoint = None
+    if not TRAINING_NEW:
+        last = find_last_training_dir()
+        if last is not None:
+            log(f"TRAINING_NEW is False — reusing last training dir: {last}")
+            output_dir = last
+            # find latest checkpoint inside that dir
+            ck = find_latest_checkpoint(output_dir)
+            if ck is not None:
+                resume_checkpoint = ck
+                log(f"Found latest checkpoint: {resume_checkpoint}")
+        else:
+            log("TRAINING_NEW is False but no previous training dir found; creating new one")
+            output_dir = prepare_output_dir()
+    else:
+        output_dir = prepare_output_dir()
     # Global log sink
     global FINAL_LOG_FH
     logs_dir = output_dir / "logs"
@@ -714,8 +791,6 @@ def main():
     _ORIG_STDOUT, _ORIG_STDERR = sys.stdout, sys.stderr
     sys.stdout = _TeeStream(_ORIG_STDOUT, lambda: FINAL_LOG_FH)
     sys.stderr = _TeeStream(_ORIG_STDERR, lambda: FINAL_LOG_FH)
-    global TEE_ACTIVE
-    TEE_ACTIVE = True
 
     # === Capture Python warnings into the sink ===
     warnings.simplefilter("default")  # show deprecations by default
@@ -773,7 +848,7 @@ def main():
     (bpe_folder / "vocab.json").rename(save_dir / "vocab.json")
     (bpe_folder / "merges.txt").rename(save_dir / "merges.txt")
     bpe_folder.rmdir()
-    print(f"✅ Chat template + vocab/merges dumped to {save_dir}")
+    log(f"✅ Chat template + vocab/merges dumped to {save_dir}")
 
     # Build a small formatted prompt and detect which variant appears
     fmt, tok = format_and_tokenize(
@@ -804,7 +879,6 @@ def main():
 
     log("Loading and tokenizing dataset")
     dataset = load_dataset("json", data_files=DATA_PATH, split="train")
-    print("Sample dataset entry:", dataset[0])
 
     train_dataset = dataset
 
@@ -815,17 +889,18 @@ def main():
     # Remove every original column except the model features we just produced
     remove_cols = [c for c in dataset.column_names if c not in ("input_ids","labels","attention_mask","loss_weight")]
     dataset = dataset.map(map_fn, remove_columns=remove_cols, batched=False)
-    print(f"Dataset loaded with {len(dataset)} examples.")
-    print("Sample tokenized example:", dataset[0])
+    
+    log(f"Dataset loaded with {len(dataset)} examples.")
+    log(f"Sample tokenized example: {dataset[0]}")
 
     stop_ids = tokenizer.encode("</output>", add_special_tokens=False)
-    print("stop ids:", stop_ids, tokenizer.convert_ids_to_tokens(stop_ids))
+    log(f"stop ids: {stop_ids}, {tokenizer.convert_ids_to_tokens(stop_ids)}")
 
     log("Loading model and applying LoRA")
     model = load_model_and_prepare_for_qora(tokenizer, output_dir)
 
     log("Training model")
-    train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset)
+    train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset, resume_from_checkpoint=resume_checkpoint)
 
     log("Testing training with a small dataset")
     test_training()
@@ -842,7 +917,6 @@ def main():
             FINAL_LOG_FH.close()
     except Exception:
         pass
-
 
 if __name__ == "__main__":
     main()
