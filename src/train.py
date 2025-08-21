@@ -37,7 +37,6 @@ from config.training_config import (
     FINAL_LOG_FH,
     _ORIG_STDOUT,
     _ORIG_STDERR,
-    TEE_ACTIVE,
     ASSISTANT_OPEN_WITH_NL,
     ASSISTANT_OPEN_NO_NL
 )
@@ -138,18 +137,26 @@ class SFTTrainer(Trainer):
 
         return (loss, outputs) if return_outputs else loss
 
-class StopSequenceCriteria(StoppingCriteria):
-     def __init__(self, stop_sequences_ids):
-        self.stop_sequences_ids = stop_sequences_ids
-        self.window = max(len(s) for s in stop_sequences_ids) if stop_sequences_ids else 0
-        self.buf = []
+class StopOnSubstring(StoppingCriteria):
+    def __init__(self, tokenizer, substrings, start_len: int, window_tokens: int = 64):
+        self.tokenizer = tokenizer
+        self.substrings = substrings
+        self.start_len = int(start_len)
+        self.window = window_tokens
 
-     def __call__(self, input_ids, scores, **kwargs):
-        if self.window == 0:
+    def __call__(self, input_ids, scores, **kwargs):
+        # input_ids: tensor [batch, seq_len]
+        seq = input_ids[0].tolist()
+        seq_len = len(seq)
+        # nothing generated yet
+        if seq_len <= self.start_len:
             return False
-        self.buf = input_ids[0].tolist()[-self.window:]
-        for s in self.stop_sequences_ids:
-            if len(self.buf) >= len(s) and self.buf[-len(s):] == s:
+        # take only tokens after prompt start_len (cap to window)
+        tail_start = max(self.start_len, seq_len - self.window)
+        tail = seq[tail_start: seq_len]
+        text = self.tokenizer.decode(tail, skip_special_tokens=False)
+        for sub in self.substrings:
+            if sub in text:
                 return True
         return False
 
@@ -327,13 +334,15 @@ def format_and_tokenize(messages, tokenizer, return_tensors=False, add_generatio
 
 def build_bad_words_ids(tokenizer):
     bad = [
-        "<|im_start|>", "<|im_end|>", "<|assistant|>", "<|user|>", "<|system|>",
+        "<|im_start|>", "<|user|>", "<|system|>",
         "<|im_im|>", "[META]", "[/META]"
     ]
     out = []
+
     for s in bad:
         ids = tokenizer.encode(s, add_special_tokens=False)
         if ids: out.append(ids)
+    
     return out
 
 def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids=None, label="Eval", mode="auto"):
@@ -362,20 +371,18 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
         inputs = tokenizer([formatted_text], return_tensors="pt")
         inputs = {k: v.to(model_device) for k, v in inputs.items()}
 
-    stop_out    = tokenizer.encode("</output>", add_special_tokens=False)
-    stop_imend  = tokenizer.encode("<|im_end|>", add_special_tokens=False)
-    stop_imstrt = tokenizer.encode("<|im_start|>", add_special_tokens=False)
-    stop_asst   = tokenizer.encode("<|assistant|>", add_special_tokens=False)
     bad_words_ids = build_bad_words_ids(tokenizer)
+        
+    prompt_len = inputs["input_ids"].shape[1]
+    stop_subs = ["</output>", "<|im_end|>"]
+    stopping_criteria = StoppingCriteriaList([StopOnSubstring(tokenizer, stop_subs, start_len=prompt_len)])
 
     with torch.inference_mode():
         output = model.generate(
             **inputs,
             do_sample=False,
             max_new_tokens=192,
-            stopping_criteria=StoppingCriteriaList([StopSequenceCriteria(
-                [stop_out, stop_imend, stop_imstrt, stop_asst]
-            )]),
+            stopping_criteria=stopping_criteria,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
             no_repeat_ngram_size=4,
@@ -624,8 +631,8 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
         output_dir=output_dir,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=8,
-        num_train_epochs=10,
-        # max_steps=260,
+        # num_train_epochs=10,
+        max_steps=300,
         learning_rate=2e-5,
         weight_decay=0.01,
         warmup_ratio=0.3,
@@ -705,8 +712,6 @@ def main():
     _ORIG_STDOUT, _ORIG_STDERR = sys.stdout, sys.stderr
     sys.stdout = _TeeStream(_ORIG_STDOUT, lambda: FINAL_LOG_FH)
     sys.stderr = _TeeStream(_ORIG_STDERR, lambda: FINAL_LOG_FH)
-    global TEE_ACTIVE
-    TEE_ACTIVE = True
 
     # === Capture Python warnings into the sink ===
     warnings.simplefilter("default")  # show deprecations by default
@@ -805,6 +810,7 @@ def main():
     # Remove every original column except the model features we just produced
     remove_cols = [c for c in dataset.column_names if c not in ("input_ids","labels","attention_mask","loss_weight")]
     dataset = dataset.map(map_fn, remove_columns=remove_cols, batched=False)
+    
     log(f"Dataset loaded with {len(dataset)} examples.")
     log(f"Sample tokenized example: {dataset[0]}")
 
