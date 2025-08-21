@@ -15,19 +15,19 @@ This repo shows how to:
 ├── config/
 │   ├── config.py            # Central paths & constants
 │   └── lora_config.json     # LoRA hyperparameters
-├── datasets/
+├── datasets_new/
 │   ├── ai/
 │   │   └── dataset.jsonl
-│   ├── build_dataset.py     # Collate domain files into data.jsonl
-│   └── data.jsonl           # Combined training data
+│   ├── build_train_jsonl.py # Build/train dataset script (new scalable structure)
+│   └── train_data.jsonl     # Combined training data (new)
 ├── merged-models/
 │   └── deepseek-merged/     # Merged model outputs
 ├── output/
 │   └── deepseek-ai/         # QLoRA training runs
-├── scripts/
-│   ├── train.py             # QLoRA fine-tuning
-│   ├── merge_adapter.py     # Merge adapter → base model
-│   └── convert_to_gguf.sh   # GGUF conversion wrapper
+└── src/
+    ├── train.py             # QLoRA fine-tuning & generation helpers
+    ├── merge_adapter.py     # Merge adapter → base model
+    └── convert_to_gguf.sh   # GGUF conversion wrapper (wrapper lives in src/)
 └── tools/
     └── llama/               # `transformers-to-gguf.py` & helpers
 ```
@@ -36,35 +36,21 @@ This repo shows how to:
 
 ## 📖 Datasets
 
-This project uses domain-specific datasets under `datasets/*`. Each dataset should have a `dataset.jsonl` file with structured training data.
+This project uses domain-specific datasets under `datasets_new/*` following a structured, extensible layout.
 
-There are currently 2715+ questions, 13 topics, including:
+The full topic hierarchy, tags, and example questions are maintained in `datasets_new/structure.enriched.json` and summarized in `datasets_new/README.md` (see that file for contribution instructions, required file names, and structure details).
 
--   AI
--   Business
--   Ethics
--   Finance
--   Format
--   Geography
--   Global trends
--   Marketing
--   Productivity
--   Psychology
--   Short questions
--   Strategy
--   Tech
-
-## You can add your own datasets by creating a new folder under `datasets/` and adding a `dataset.jsonl` file with your training examples.
+You can add your own datasets by following the contribution guidelines in `datasets_new/README.md` and placing new topic folders under `datasets_new/`.
 
 ## 🚀 Quickstart
 
 ### 1. Build your dataset
 
-```bash
-python datasets/build_dataset.py
+```powershell
+python datasets_new/build_train_jsonl.py
 ```
 
-This pulls in every `dataset.jsonl` under `datasets/*` and writes `datasets/data.jsonl`.
+This pulls in every `dataset.jsonl` (or topic files) under `datasets_new/*` and writes `datasets_new/train_data.jsonl`.
 
 ### 2. Train with QLoRA
 
@@ -74,6 +60,16 @@ python src/train.py
 
 Outputs checkpoints under `output/deepseek-ai/TRAINING-N/checkpoint-M/`.  
 Special/chat tokens, `tokenizer.json`, `vocab.json`, `merges.txt`, and your `chat_template.jinja` are saved there.
+
+Notes on resuming training
+
+-   To continue the last training run instead of starting a new one, set `TRAINING_NEW = False` in `config/training_config.py`.
+-   The resume logic prefers an epoch-based continuation: the trainer reads the epoch recorded in the checkpoint's `trainer_state.json` and will extend training by `TRAINING_EXTRA_EPOCHS` (see `TRAINING_EPOCHS` and `TRAINING_EXTRA_EPOCHS` in `config/training_config.py`). This avoids issues with absolute `max_steps` when resuming from checkpoints.
+-   The codebase also includes small helpers under `src/helpers/` (for example `build_messages.py` and `loggers.py`) to keep prompt construction and logging consistent when resuming and running generations.
+
+Generation stopping
+
+-   The training/generation utilities include a decoding-based stopper that looks for output delimiters like `</output>` (or the model's end token) in decoded text rather than relying solely on exact token-id sequences. This is more robust across tokenizers and prevents the model from emitting unwanted extra tokens after the intended end marker.
 
 ### 3. Merge LoRA into the base
 
