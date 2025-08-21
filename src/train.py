@@ -710,8 +710,9 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
             original_epochs = TRAINING_EPOCHS
 
         new_target_epochs = current_epoch + TRAINING_EXTRA_EPOCHS
+
         if new_target_epochs <= original_epochs:
-            new_target_epochs = current_epoch + TRAINING_EXTRA_EPOCHS
+            pass # No alternative calculation; assignment above is sufficient
 
         log(f"Resuming from checkpoint. current_epoch={current_epoch:.2f}, setting num_train_epochs -> {new_target_epochs:.2f}")
         training_args.num_train_epochs = new_target_epochs
