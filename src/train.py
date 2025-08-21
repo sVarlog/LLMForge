@@ -33,19 +33,15 @@ from config.training_config import (
     LORA_CONFIG_PATH,
     ANCHOR_INTO_OUTPUT,
     SUPERVISE_OUTPUT_ONLY,
-    DEBUG,
-    DEBUG_SAMPLE_LIMIT,
-    DEBUG_SAMPLE_RANDOM,
-    DEBUG_SAMPLE_PROB,
-    _DEBUG_SEEN,
     FINAL_LOG_FH,
     _ORIG_STDOUT,
     _ORIG_STDERR,
     TEE_ACTIVE,
-    EVAL_QUESTIONS,
     ASSISTANT_OPEN_WITH_NL,
     ASSISTANT_OPEN_NO_NL
 )
+
+MAX_LEN=2048
 
 # --- Difficulty weighting (training + eval) ---
 DIFFICULTY_TO_LOSS_WEIGHT = {1: 0.90, 2: 1.00, 3: 1.15, 4: 1.35, 5: 1.60}
@@ -78,7 +74,6 @@ def _meta_block(ex: dict) -> str:
     )
 
 def _extract_between(text: str, open_tag: str, close_tag: str) -> str:
-    import re
     m = re.search(re.escape(open_tag) + r"(.*?)" + re.escape(close_tag), text, flags=re.DOTALL)
     return (m.group(1).strip() if m else "").strip()
 
@@ -177,10 +172,6 @@ def load_and_prepare_tokenizer(output_dir: Path):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token or tokenizer.unk_token
 
-    # Quick visibility check
-    test_str = "<think>Test</think><output>Test</output>"
-    test_tokens = tokenizer.tokenize(test_str)
-    print("Tokenization test (no new tokens added):", test_tokens)
     return tokenizer
 
 
@@ -222,7 +213,7 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
         tokenize=True,
         add_generation_prompt=False,
         return_tensors=None,
-        max_length=2048,
+        max_length=MAX_LEN,
         truncation=True,
     )
 
@@ -230,19 +221,22 @@ def tokenize_function(ex, tokenizer, canonical_assistant_ids):
 
     # Locate assistant-open marker
     start_pos = find_token_sequence(token_ids, canonical_assistant_ids)
+    
     if start_pos == -1:
         cand_with_nl = tokenizer.encode(ASSISTANT_OPEN_WITH_NL, add_special_tokens=False)
         cand_no_nl   = tokenizer.encode(ASSISTANT_OPEN_NO_NL, add_special_tokens=False)
         start_pos = find_token_sequence(token_ids, cand_with_nl)
         used_marker = cand_with_nl
+        
         if start_pos == -1:
             start_pos = find_token_sequence(token_ids, cand_no_nl)
             used_marker = cand_no_nl
         if start_pos == -1:
-            print("❌ Could not find assistant marker in tokens (tokenize_function)")
+            log("❌ Could not find assistant marker in tokens (tokenize_function)")
             tail = token_ids[-120:] if len(token_ids) > 120 else token_ids
-            print("tail ids:", tail)
-            print("tail toks:", tokenizer.convert_ids_to_tokens(tail))
+            log("tail ids:", tail)
+            log("tail toks:", tokenizer.convert_ids_to_tokens(tail))
+
             raise AssertionError("❌ Could not find assistant marker in tokens")
     else:
         used_marker = canonical_assistant_ids
@@ -314,7 +308,7 @@ def format_and_tokenize(messages, tokenizer, return_tensors=False, add_generatio
                     ids_list = ids
             pos = find_token_sequence(ids_list, canonical_assistant_ids)
             if pos == -1:
-                print("⚠️ formatted_text does NOT contain canonical assistant marker")
+                log("⚠️ formatted_text does NOT contain canonical assistant marker")
                 debug("formatted_text repr: " + repr(formatted_text[-200:]))
                 debug("canonical_assistant_ids tokens: " + str(tokenizer.convert_ids_to_tokens(canonical_assistant_ids)))
             else:
@@ -329,7 +323,7 @@ def format_and_tokenize(messages, tokenizer, return_tensors=False, add_generatio
         tokenized = tokenizer(formatted_text, return_tensors="pt", add_special_tokens=False)
     else:
         tokenized = tokenizer(
-            formatted_text, padding="longest", truncation=True, max_length=2048, return_tensors=None, add_special_tokens=False
+            formatted_text, padding="longest", truncation=True, max_length=MAX_LEN, return_tensors=None, add_special_tokens=False
         )
 
     return formatted_text, tokenized
@@ -407,7 +401,6 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
     )
 
     log(f"Is structured output: {is_structured_output(decoded)}")
-    log(f"Is structured output: {is_structured_output(decoded)}")
     
     return out_str
 
@@ -417,20 +410,23 @@ def check_lora_modules(model, lora_config_path: str):
         lora_cfg = LoraConfig(**json.load(f))
     all_module_names = [name for name, _ in model.named_modules()]
     found, missing = [], []
-    print("\n🔍 Checking LoRA target modules against the model…")
+
+    log("Checking LoRA target modules against the model…")
+
     for target in lora_cfg.target_modules:
         matches = [mn for mn in all_module_names if target in mn]
         if matches:
             found.append(target)
             snippet = matches[:3] + (["…"] if len(matches) > 3 else [])
-            print(f"  ✔ `{target}` matched in: {snippet}")
+            log(f"  ✔ `{target}` matched in: {snippet}")
         else:
             missing.append(target)
-            print(f"  ❌ `{target}` NOT found in model modules!")
-    print(f"\n✅ Modules to be LoRA‐tuned : {found}")
+            log(f"  ❌ `{target}` NOT found in model modules!")
+    log(f"✅ Modules to be LoRA‐tuned : {found}")
+
     if missing:
-        print(f"⚠️ Warning: these targets were missing and will be skipped: {missing}")
-    print("==============================================\n")
+        log(f"⚠️ Warning: these targets were missing and will be skipped: {missing}")
+
     return lora_cfg
 
 
@@ -519,7 +515,6 @@ class EvalCallback(TrainerCallback):
         # grab <output>...</output>
         pred_out = _extract_between(pred_text, "<output>", "</output>")
         # quick lexical F1 (casefold + simple tokenization)
-        import re
         tok = lambda s: re.findall(r"[a-z0-9]+", s.casefold())
         p = tok(pred_out)
         r = tok(ref_text or "")
@@ -773,7 +768,7 @@ def main():
     (bpe_folder / "vocab.json").rename(save_dir / "vocab.json")
     (bpe_folder / "merges.txt").rename(save_dir / "merges.txt")
     bpe_folder.rmdir()
-    print(f"✅ Chat template + vocab/merges dumped to {save_dir}")
+    log(f"✅ Chat template + vocab/merges dumped to {save_dir}")
 
     # Build a small formatted prompt and detect which variant appears
     fmt, tok = format_and_tokenize(
@@ -804,7 +799,6 @@ def main():
 
     log("Loading and tokenizing dataset")
     dataset = load_dataset("json", data_files=DATA_PATH, split="train")
-    print("Sample dataset entry:", dataset[0])
 
     train_dataset = dataset
 
@@ -815,11 +809,11 @@ def main():
     # Remove every original column except the model features we just produced
     remove_cols = [c for c in dataset.column_names if c not in ("input_ids","labels","attention_mask","loss_weight")]
     dataset = dataset.map(map_fn, remove_columns=remove_cols, batched=False)
-    print(f"Dataset loaded with {len(dataset)} examples.")
-    print("Sample tokenized example:", dataset[0])
+    log(f"Dataset loaded with {len(dataset)} examples.")
+    log("Sample tokenized example:", dataset[0])
 
     stop_ids = tokenizer.encode("</output>", add_special_tokens=False)
-    print("stop ids:", stop_ids, tokenizer.convert_ids_to_tokens(stop_ids))
+    log("stop ids:", stop_ids, tokenizer.convert_ids_to_tokens(stop_ids))
 
     log("Loading model and applying LoRA")
     model = load_model_and_prepare_for_qora(tokenizer, output_dir)
