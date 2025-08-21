@@ -22,7 +22,7 @@ from transformers import (
 )
 from tokenizers import Tokenizer
 
-from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training
+from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training, PeftModel
 from config.config import MODEL_NAME
 
 from src.helpers.build_messages import build_messages
@@ -38,7 +38,10 @@ from config.training_config import (
     _ORIG_STDOUT,
     _ORIG_STDERR,
     ASSISTANT_OPEN_WITH_NL,
-    ASSISTANT_OPEN_NO_NL
+    ASSISTANT_OPEN_NO_NL,
+    TRAINING_NEW,
+    TRAINING_EPOCHS,
+    TRAINING_EXTRA_EPOCHS,
 )
 
 MAX_LEN=2048
@@ -168,6 +171,37 @@ def prepare_output_dir() -> Path:
     output_dir = OUTPUT_BASE_DIR / f"training-{next_training_num}"
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+def find_last_training_dir() -> Path | None:
+    """Return the Path to the last training-N folder or None if none exists."""
+    if not os.path.exists(OUTPUT_BASE_DIR):
+        return None
+    dirs = [d for d in os.listdir(OUTPUT_BASE_DIR) if d.startswith("training-") and os.path.isdir(os.path.join(OUTPUT_BASE_DIR, d))]
+    if not dirs:
+        return None
+    nums = [int(d.split("-")[1]) for d in dirs if d.split("-")[1].isdigit()]
+    if not nums:
+        return None
+    last = max(nums)
+    return OUTPUT_BASE_DIR / f"training-{last}"
+
+
+def find_latest_checkpoint(training_dir: Path) -> Path | None:
+    """Return latest checkpoint folder inside training_dir or None."""
+    if not training_dir or not training_dir.exists():
+        return None
+    chkp_dirs = [p for p in training_dir.iterdir() if p.is_dir() and p.name.startswith("checkpoint-")]
+    if not chkp_dirs:
+        return None
+    # pick highest numeric suffix
+    def _num(p):
+        try:
+            return int(p.name.split("-")[1])
+        except Exception:
+            return -1
+    chkp_dirs.sort(key=_num)
+    return chkp_dirs[-1]
 
 
 def load_and_prepare_tokenizer(output_dir: Path):
@@ -471,6 +505,7 @@ def load_model_and_prepare_for_qora(tokenizer, output_dir: Path):
     log(f"Checking LoRA config at {LORA_CONFIG_PATH}…")
     lora_cfg = check_lora_modules(model, LORA_CONFIG_PATH)
     log("Applying LoRA adapters…")
+    # if output_dir already contains a PEFT adapter, we can load it later via PeftModel.from_pretrained
     model = get_peft_model(model, lora_cfg)
 
     model.generation_config.do_sample = False
@@ -581,7 +616,7 @@ class EvalCallback(TrainerCallback):
             pass
 
 
-def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset):
+def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset, resume_from_checkpoint: Path | None = None):
     log("Configuring training arguments...")
     pylog.getLogger("accelerate").setLevel(pylog.INFO)
     pylog.getLogger("peft").setLevel(pylog.INFO)
@@ -631,8 +666,7 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
         output_dir=output_dir,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=8,
-        # num_train_epochs=10,
-        max_steps=300,
+        num_train_epochs=TRAINING_EPOCHS,
         learning_rate=2e-5,
         weight_decay=0.01,
         warmup_ratio=0.3,
@@ -657,7 +691,36 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
         callbacks=[EvalCallback(tokenizer, canonical_assistant_ids, output_dir, interval=20, raw_dataset=train_dataset)],
     )
 
-    trainer.train()
+    if resume_from_checkpoint:
+        # Try to extend epochs when resuming rather than fiddling max_steps.
+        try:
+            ts = Path(resume_from_checkpoint) / "trainer_state.json"
+            if ts.exists():
+                st = json.load(open(ts, "r", encoding="utf-8"))
+                current_epoch = float(st.get("epoch", 0.0) or 0.0)
+            else:
+                current_epoch = 0.0
+        except Exception:
+            current_epoch = 0.0
+
+        # If resuming, extend target epochs by TRAINING_EXTRA_EPOCHS
+        try:
+            original_epochs = float(training_args.num_train_epochs or TRAINING_EPOCHS)
+        except Exception:
+            original_epochs = TRAINING_EPOCHS
+
+        new_target_epochs = current_epoch + TRAINING_EXTRA_EPOCHS
+        if new_target_epochs <= original_epochs:
+            new_target_epochs = current_epoch + TRAINING_EXTRA_EPOCHS
+
+        log(f"Resuming from checkpoint. current_epoch={current_epoch:.2f}, setting num_train_epochs -> {new_target_epochs:.2f}")
+        training_args.num_train_epochs = new_target_epochs
+
+        # re-create trainer with updated args so the Trainer picks up the new epoch target
+        trainer.args = training_args
+        trainer.train(resume_from_checkpoint=str(resume_from_checkpoint))
+    else:
+        trainer.train()
     model.save_pretrained(output_dir)
 
 
@@ -700,7 +763,22 @@ def test_training():
 
 def main():
     log("Preparing output directory")
-    output_dir = prepare_output_dir()
+    resume_checkpoint = None
+    if not TRAINING_NEW:
+        last = find_last_training_dir()
+        if last is not None:
+            log(f"TRAINING_NEW is False — reusing last training dir: {last}")
+            output_dir = last
+            # find latest checkpoint inside that dir
+            ck = find_latest_checkpoint(output_dir)
+            if ck is not None:
+                resume_checkpoint = ck
+                log(f"Found latest checkpoint: {resume_checkpoint}")
+        else:
+            log("TRAINING_NEW is False but no previous training dir found; creating new one")
+            output_dir = prepare_output_dir()
+    else:
+        output_dir = prepare_output_dir()
     # Global log sink
     global FINAL_LOG_FH
     logs_dir = output_dir / "logs"
@@ -821,7 +899,7 @@ def main():
     model = load_model_and_prepare_for_qora(tokenizer, output_dir)
 
     log("Training model")
-    train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset)
+    train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset, resume_from_checkpoint=resume_checkpoint)
 
     log("Testing training with a small dataset")
     test_training()

@@ -37,6 +37,10 @@ FINAL_LOG_FH = None
 _ORIG_STDOUT = None
 _ORIG_STDERR = None
 TEE_ACTIVE = False  # set True after we install the tee streams
+TRAINING_NEW = False  # set True if this is a new training run, False if resuming
+# Epoch-based training defaults
+TRAINING_EPOCHS = 5
+TRAINING_EXTRA_EPOCHS = 5  # when resuming (TRAINING_NEW=False), add these extra epochs
 
 EVAL_QUESTIONS = [
   "2+2?",
