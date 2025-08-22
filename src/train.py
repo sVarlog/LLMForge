@@ -527,7 +527,8 @@ def is_structured_output(text: str) -> bool:
     segment = m.group(1) if m else text
     has_think  = ("<think>" in segment and "</think>" in segment)
     has_output = ("<output>" in segment and "</output>" in segment)
-    return has_output or has_think
+    
+    return has_output and has_think
 
 
 class EvalCallback(TrainerCallback):

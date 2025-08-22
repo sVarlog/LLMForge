@@ -2,9 +2,9 @@ from pathlib import Path
 import os
 
 # Base model name
-# MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B" 
-# MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
-MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" 
+# MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
+MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+# MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 # MODEL_NAME = "deepseek-ai/DeepSeek-LLM-7B-Base" 
 # MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 # Base model path
