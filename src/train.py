@@ -42,6 +42,7 @@ from config.training_config import (
     TRAINING_NEW,
     TRAINING_EPOCHS,
     TRAINING_EXTRA_EPOCHS,
+    EVAL_QUESTIONS
 )
 
 MAX_LEN=2048
@@ -438,7 +439,12 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
         "📤 Output:\n" + decoded + "\n"
     )
 
-    log(f"Is structured output: {is_structured_output(decoded)}")
+    # Check structured output against the full returned string (prompt + decoded)
+    try:
+        structured_flag = is_structured_output(out_str)
+    except Exception:
+        structured_flag = is_structured_output(decoded)
+    log(f"Is structured output: {structured_flag}")
     
     return out_str
 
@@ -527,7 +533,7 @@ def is_structured_output(text: str) -> bool:
     segment = m.group(1) if m else text
     has_think  = ("<think>" in segment and "</think>" in segment)
     has_output = ("<output>" in segment and "</output>" in segment)
-    
+
     return has_output and has_think
 
 
@@ -727,8 +733,6 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
 
 
 def test_training():
-    from peft import PeftModel
-
     BASE_MODEL = MODEL_NAME
     training_dirs = [
         d
@@ -754,154 +758,167 @@ def test_training():
     model.resize_token_embeddings(len(tokenizer))
     model = PeftModel.from_pretrained(model, OUTPUT_DIR, is_trainable=False)
 
-    examples = ["2+2?"]
-    for i, question in enumerate(examples, start=1):
+    for i, question in enumerate(EVAL_QUESTIONS, start=1):
         log(f"Processing example {i}: {question}")
         
         messages = build_messages(SYSTEM_PROMPT, question)
-        
-        run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids=None, label=f"Example {i}", mode="force_think")
+        # ensure model is in eval mode and capture the generated output so we can log it
+        try:
+            model.eval()
+        except Exception:
+            pass
 
+        out_str = run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids=None, label=f"Example {i}", mode="auto")
 
-def main():
-    log("Preparing output directory")
-    resume_checkpoint = None
-    if not TRAINING_NEW:
-        last = find_last_training_dir()
-        if last is not None:
-            log(f"TRAINING_NEW is False — reusing last training dir: {last}")
-            output_dir = last
-            # find latest checkpoint inside that dir
-            ck = find_latest_checkpoint(output_dir)
-            if ck is not None:
-                resume_checkpoint = ck
-                log(f"Found latest checkpoint: {resume_checkpoint}")
-        else:
-            log("TRAINING_NEW is False but no previous training dir found; creating new one")
-            output_dir = prepare_output_dir()
-    else:
-        output_dir = prepare_output_dir()
-    # Global log sink
-    global FINAL_LOG_FH
-    logs_dir = output_dir / "logs"
-    logs_dir.mkdir(exist_ok=True, parents=True)
-    FINAL_LOG_FH = open(logs_dir / "finalLog.txt", "a", encoding="utf-8")
-
-    # === Tee stdout/stderr so tqdm + Trainer bars and prints land in finalLog.txt ===
-    global _ORIG_STDOUT, _ORIG_STDERR
-    _ORIG_STDOUT, _ORIG_STDERR = sys.stdout, sys.stderr
-    sys.stdout = _TeeStream(_ORIG_STDOUT, lambda: FINAL_LOG_FH)
-    sys.stderr = _TeeStream(_ORIG_STDERR, lambda: FINAL_LOG_FH)
-
-    # === Capture Python warnings into the sink ===
-    warnings.simplefilter("default")  # show deprecations by default
-    def _showwarning(message, category, filename, lineno, file=None, line=None):
-        s = warnings.formatwarning(message, category, filename, lineno, line)
+        # Log and persist the generation to the final log file so test outputs are visible
+        log(out_str)
         try:
             if FINAL_LOG_FH:
-                FINAL_LOG_FH.write(s)
+                FINAL_LOG_FH.write(out_str)
                 FINAL_LOG_FH.flush()
         except Exception:
             pass
-        # also print to console (already teed)
-        try:
-            _ORIG_STDERR.write(s)
-            _ORIG_STDERR.flush()
-        except Exception:
-            pass
-    warnings.showwarning = _showwarning
 
-    # === Keep Transformers logger quieter to avoid config spam ===
-    pylog.basicConfig(level=pylog.WARNING)
-    tf_logger = pylog.getLogger("transformers")
-    tf_logger.setLevel(pylog.WARNING)
 
-    # avoid duplicate handlers on reruns
-    if not any(isinstance(h, pylog.StreamHandler) and getattr(h.stream, "name", "") == FINAL_LOG_FH.name
-               for h in tf_logger.handlers if hasattr(h, "stream")):
-        tf_logger.addHandler(pylog.StreamHandler(FINAL_LOG_FH))
+def main():
+    # log("Preparing output directory")
+    # resume_checkpoint = None
+    # if not TRAINING_NEW:
+    #     last = find_last_training_dir()
+    #     if last is not None:
+    #         log(f"TRAINING_NEW is False — reusing last training dir: {last}")
+    #         output_dir = last
+    #         # find latest checkpoint inside that dir
+    #         ck = find_latest_checkpoint(output_dir)
+    #         if ck is not None:
+    #             resume_checkpoint = ck
+    #             log(f"Found latest checkpoint: {resume_checkpoint}")
+    #     else:
+    #         log("TRAINING_NEW is False but no previous training dir found; creating new one")
+    #         output_dir = prepare_output_dir()
+    # else:
+    #     output_dir = prepare_output_dir()
+    # # Global log sink
+    # global FINAL_LOG_FH
+    # logs_dir = output_dir / "logs"
+    # logs_dir.mkdir(exist_ok=True, parents=True)
+    # FINAL_LOG_FH = open(logs_dir / "finalLog.txt", "a", encoding="utf-8")
 
-    # Optional: leave HF internal verbosity at WARNING for clean logs
-    logging.set_verbosity_warning()
+    # # === Tee stdout/stderr so tqdm + Trainer bars and prints land in finalLog.txt ===
+    # global _ORIG_STDOUT, _ORIG_STDERR
+    # _ORIG_STDOUT, _ORIG_STDERR = sys.stdout, sys.stderr
+    # sys.stdout = _TeeStream(_ORIG_STDOUT, lambda: FINAL_LOG_FH)
+    # sys.stderr = _TeeStream(_ORIG_STDERR, lambda: FINAL_LOG_FH)
 
-    log("Loading tokenizer and adding special tags")
-    tokenizer = load_and_prepare_tokenizer(output_dir)
+    # # === Capture Python warnings into the sink ===
+    # warnings.simplefilter("default")  # show deprecations by default
+    # def _showwarning(message, category, filename, lineno, file=None, line=None):
+    #     s = warnings.formatwarning(message, category, filename, lineno, line)
+    #     try:
+    #         if FINAL_LOG_FH:
+    #             FINAL_LOG_FH.write(s)
+    #             FINAL_LOG_FH.flush()
+    #     except Exception:
+    #         pass
+    #     # also print to console (already teed)
+    #     try:
+    #         _ORIG_STDERR.write(s)
+    #         _ORIG_STDERR.flush()
+    #     except Exception:
+    #         pass
+    # warnings.showwarning = _showwarning
 
-    # Determine canonical assistant-open token ids by rendering a sample formatted prompt
-    # and checking which variant exists in the tokenization.
-    s_nl = tokenizer.encode(ASSISTANT_OPEN_WITH_NL, add_special_tokens=False)
-    s_no = tokenizer.encode(ASSISTANT_OPEN_NO_NL, add_special_tokens=False)
+    # # === Keep Transformers logger quieter to avoid config spam ===
+    # pylog.basicConfig(level=pylog.WARNING)
+    # tf_logger = pylog.getLogger("transformers")
+    # tf_logger.setLevel(pylog.WARNING)
 
-    # Save chat template & tokenizer files (so canonical detection uses same template)
-    log("Saving chat template to tokenizer")
-    save_dir = output_dir
-    with open("templates/chat_template.jinja", "r", encoding="utf-8") as f:
-        chat_template_text = f.read()
-    tokenizer.chat_template = chat_template_text
-    tokenizer.init_kwargs["chat_template"] = chat_template_text
-    tokenizer.save_pretrained(save_dir)
-    # also dump BPE files for inspection
-    fast_tok = Tokenizer.from_file(str(save_dir / "tokenizer.json"))
-    bpe = fast_tok.model
-    bpe_folder = save_dir / "bpe-tokenizer"
-    bpe_folder.mkdir(exist_ok=True)
-    bpe.save(str(bpe_folder))
-    (bpe_folder / "vocab.json").rename(save_dir / "vocab.json")
-    (bpe_folder / "merges.txt").rename(save_dir / "merges.txt")
-    bpe_folder.rmdir()
-    log(f"✅ Chat template + vocab/merges dumped to {save_dir}")
+    # # avoid duplicate handlers on reruns
+    # if not any(isinstance(h, pylog.StreamHandler) and getattr(h.stream, "name", "") == FINAL_LOG_FH.name
+    #            for h in tf_logger.handlers if hasattr(h, "stream")):
+    #     tf_logger.addHandler(pylog.StreamHandler(FINAL_LOG_FH))
 
-    # Build a small formatted prompt and detect which variant appears
-    fmt, tok = format_and_tokenize(
-        [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "__DETECT__"}],
-        tokenizer,
-        return_tensors=True,
-        add_generation_prompt=True,
-        canonical_assistant_ids=None,
-    )
-    fmt_ids = tok["input_ids"][0].tolist()
-    pos_no = find_token_sequence(fmt_ids, s_no)
-    pos_nl = find_token_sequence(fmt_ids, s_nl)
+    # # Optional: leave HF internal verbosity at WARNING for clean logs
+    # logging.set_verbosity_warning()
 
-    if pos_no != -1 and pos_nl == -1:
-        canonical_assistant_ids = s_no
-        debug("Canonical assistant marker: no-newline variant")
-    elif pos_nl != -1 and pos_no == -1:
-        canonical_assistant_ids = s_nl
-        debug("Canonical assistant marker: newline variant")
-    elif pos_nl != -1 and pos_no != -1:
-        # prefer exact match with no newline if both present (rare)
-        canonical_assistant_ids = s_no
-        debug("Both variants in template; picking no-newline as canonical")
-    else:
-        # fallback: prefer s_nl if tokenizer tends to add newline (observed in your logs)
-        canonical_assistant_ids = s_nl
-        debug("No variant found in detection; defaulting to newline variant (best-effort)")
+    # log("Loading tokenizer and adding special tags")
+    # tokenizer = load_and_prepare_tokenizer(output_dir)
 
-    log("Loading and tokenizing dataset")
-    dataset = load_dataset("json", data_files=DATA_PATH, split="train")
+    # # Determine canonical assistant-open token ids by rendering a sample formatted prompt
+    # # and checking which variant exists in the tokenization.
+    # s_nl = tokenizer.encode(ASSISTANT_OPEN_WITH_NL, add_special_tokens=False)
+    # s_no = tokenizer.encode(ASSISTANT_OPEN_NO_NL, add_special_tokens=False)
 
-    train_dataset = dataset
+    # # Save chat template & tokenizer files (so canonical detection uses same template)
+    # log("Saving chat template to tokenizer")
+    # save_dir = output_dir
+    # with open("templates/chat_template.jinja", "r", encoding="utf-8") as f:
+    #     chat_template_text = f.read()
+    # tokenizer.chat_template = chat_template_text
+    # tokenizer.init_kwargs["chat_template"] = chat_template_text
+    # tokenizer.save_pretrained(save_dir)
+    # # also dump BPE files for inspection
+    # fast_tok = Tokenizer.from_file(str(save_dir / "tokenizer.json"))
+    # bpe = fast_tok.model
+    # bpe_folder = save_dir / "bpe-tokenizer"
+    # bpe_folder.mkdir(exist_ok=True)
+    # bpe.save(str(bpe_folder))
+    # (bpe_folder / "vocab.json").rename(save_dir / "vocab.json")
+    # (bpe_folder / "merges.txt").rename(save_dir / "merges.txt")
+    # bpe_folder.rmdir()
+    # log(f"✅ Chat template + vocab/merges dumped to {save_dir}")
 
-    # Map dataset with our tokenize_function wrapper that uses canonical ids
-    def map_fn(ex):
-        return tokenize_function(ex, tokenizer, canonical_assistant_ids)
+    # # Build a small formatted prompt and detect which variant appears
+    # fmt, tok = format_and_tokenize(
+    #     [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "__DETECT__"}],
+    #     tokenizer,
+    #     return_tensors=True,
+    #     add_generation_prompt=True,
+    #     canonical_assistant_ids=None,
+    # )
+    # fmt_ids = tok["input_ids"][0].tolist()
+    # pos_no = find_token_sequence(fmt_ids, s_no)
+    # pos_nl = find_token_sequence(fmt_ids, s_nl)
 
-    # Remove every original column except the model features we just produced
-    remove_cols = [c for c in dataset.column_names if c not in ("input_ids","labels","attention_mask","loss_weight")]
-    dataset = dataset.map(map_fn, remove_columns=remove_cols, batched=False)
+    # if pos_no != -1 and pos_nl == -1:
+    #     canonical_assistant_ids = s_no
+    #     debug("Canonical assistant marker: no-newline variant")
+    # elif pos_nl != -1 and pos_no == -1:
+    #     canonical_assistant_ids = s_nl
+    #     debug("Canonical assistant marker: newline variant")
+    # elif pos_nl != -1 and pos_no != -1:
+    #     # prefer exact match with no newline if both present (rare)
+    #     canonical_assistant_ids = s_no
+    #     debug("Both variants in template; picking no-newline as canonical")
+    # else:
+    #     # fallback: prefer s_nl if tokenizer tends to add newline (observed in your logs)
+    #     canonical_assistant_ids = s_nl
+    #     debug("No variant found in detection; defaulting to newline variant (best-effort)")
+
+    # log("Loading and tokenizing dataset")
+    # dataset = load_dataset("json", data_files=DATA_PATH, split="train")
+
+    # train_dataset = dataset
+
+    # # Map dataset with our tokenize_function wrapper that uses canonical ids
+    # def map_fn(ex):
+    #     return tokenize_function(ex, tokenizer, canonical_assistant_ids)
+
+    # # Remove every original column except the model features we just produced
+    # remove_cols = [c for c in dataset.column_names if c not in ("input_ids","labels","attention_mask","loss_weight")]
+    # dataset = dataset.map(map_fn, remove_columns=remove_cols, batched=False)
     
-    log(f"Dataset loaded with {len(dataset)} examples.")
-    log(f"Sample tokenized example: {dataset[0]}")
+    # log(f"Dataset loaded with {len(dataset)} examples.")
+    # log(f"Sample tokenized example: {dataset[0]}")
 
-    stop_ids = tokenizer.encode("</output>", add_special_tokens=False)
-    log(f"stop ids: {stop_ids}, {tokenizer.convert_ids_to_tokens(stop_ids)}")
+    # stop_ids = tokenizer.encode("</output>", add_special_tokens=False)
+    # log(f"stop ids: {stop_ids}, {tokenizer.convert_ids_to_tokens(stop_ids)}")
 
-    log("Loading model and applying LoRA")
-    model = load_model_and_prepare_for_qora(tokenizer, output_dir)
+    # log("Loading model and applying LoRA")
+    # model = load_model_and_prepare_for_qora(tokenizer, output_dir)
 
-    log("Training model")
-    train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset, resume_from_checkpoint=resume_checkpoint)
+    # log("Training model")
+    # train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset, resume_from_checkpoint=resume_checkpoint)
 
     log("Testing training with a small dataset")
     test_training()
