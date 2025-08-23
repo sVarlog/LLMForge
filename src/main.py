@@ -7,6 +7,7 @@ def main():
 
     if run_mode == 'train':
         from src.train import start_training
+        from src.test.test_model import run_test_training
         start_training()
 
         log("Training completed.")

@@ -1,7 +1,7 @@
 version: "3.9"
 
 services:
-    training:
+    train:
         environment:
             - DISABLE_TRANSFORMERS_SDPA=1
             - PYTHONPATH=/workspace
@@ -10,7 +10,7 @@ services:
             context: .
             dockerfile: Dockerfile
         image: llm-trainer
-        container_name: LLMForge
+        container_name: llm-training
         volumes:
             - C:/Users/pc/.cache/huggingface:/root/.cache/huggingface
             - ./:/workspace
@@ -37,6 +37,7 @@ services:
         image: llm-trainer
         working_dir: /workspace
         command: python -u src/main.py
+        container_name: llm-testing-trained
         environment:
             - PYTHONPATH=/workspace
             - RUN_MODE=test-training
@@ -50,6 +51,7 @@ services:
         image: llm-trainer
         working_dir: /workspace
         command: python -u src/main.py
+        container_name: llm-testing-merged
         environment:
             - PYTHONPATH=/workspace
             - RUN_MODE=test-merging
@@ -63,6 +65,7 @@ services:
         working_dir: /workspace
         command: >
             bash -lc "pip install -q --no-cache-dir llama-cpp-python==0.3.5 && N_GPU_LAYERS=0 python -u src/main.py"
+        container_name: llm-testing-gguf
         environment:
             - PYTHONPATH=/workspace
             - RUN_MODE=test-gguf

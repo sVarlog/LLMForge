@@ -3,19 +3,31 @@ import shutil
 import re
 from pathlib import Path
 from datetime import datetime
+import sys
+
+# If you run this file directly (python src/merge/merge_adapter.py), Python's
+# module search path (sys.path) will include the script's directory
+# (src/merge) but not the parent `src/` directory where `_bootstrap.py`
+# lives. Ensure the `src/` directory is on sys.path so `import _bootstrap`
+# works regardless of how the script is executed.
+_this_file = Path(__file__).resolve()
+_src_dir = _this_file.parents[1]
+if str(_src_dir) not in sys.path:
+    sys.path.insert(0, str(_src_dir))
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 import _bootstrap  # normalizes sys.path so `import config` works everywhere
-from config.config import MODEL_FAMILY, MODEL_NAME
+from config.config import MODEL_FAMILY, BASE_MODEL_PATH
 
 # ───────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ───────────────────────────────────────────────────────────────────────────────
 
-# BASE_MODEL_NAME = "{MODEL_FAMILY}/{MODEL_NAME}"
-BASE_MODEL_NAME = f"{MODEL_FAMILY}/{MODEL_NAME}"
+# Use the resolved base path from config (it already handles MODEL_NAME containing
+# a family prefix) to avoid duplicating the family twice in paths.
+BASE_MODEL_NAME = BASE_MODEL_PATH
 ADAPTER_ROOT = Path("output") / BASE_MODEL_NAME              # where train.py wrote runs
 OUTPUT_ROOT = Path("merged-models") / f"{MODEL_FAMILY}"      # where to save merged model
 
@@ -159,12 +171,33 @@ def main():
 
     # Load the tokenizer actually used for training (sits at run_dir)
     log("\n🔤 Loading training tokenizer (from run root)…")
-    train_tok = AutoTokenizer.from_pretrained(
-        run_dir,
-        use_fast=True,
-        trust_remote_code=True,
-    )
-    log(f"  • Training tokenizer size: {len(train_tok)}")
+    train_tok = None
+    try:
+        train_tok = AutoTokenizer.from_pretrained(
+            run_dir,
+            use_fast=True,
+            trust_remote_code=True,
+        )
+    except Exception as e_fast:
+        # Some saved tokenizers may be incompatible with the fast backend.
+        log(f"  • Fast tokenizer load failed: {e_fast}")
+        log("  • Falling back to slow tokenizer (use_fast=False) ...")
+        try:
+            train_tok = AutoTokenizer.from_pretrained(
+                run_dir,
+                use_fast=False,
+                trust_remote_code=True,
+            )
+        except Exception as e_slow:
+            # If both attempts fail, continue without a loaded tokenizer.
+            # We'll copy tokenizer files out later so inference artifacts are preserved.
+            log(f"  • Slow tokenizer load also failed: {e_slow}")
+            log("  • Continuing without a loaded tokenizer; resizing will be skipped.")
+
+    if train_tok is not None:
+        log(f"  • Training tokenizer size: {len(train_tok)}")
+    else:
+        log("  • No tokenizer loaded (will copy tokenizer files from run dir later).")
 
     # Load base model
     log("\n🧱 Loading base model…")
@@ -183,23 +216,45 @@ def main():
 
     # Resize token embeddings if tokenizer grew during training
     current_vocab = merged.get_input_embeddings().weight.shape[0]
-    target_vocab = len(train_tok)
-    if target_vocab != current_vocab:
-        log(f"\n📏 Resizing token embeddings: {current_vocab} → {target_vocab}")
-        merged.resize_token_embeddings(target_vocab)
-        try:
-            merged.tie_weights()
-        except Exception:
-            pass
+    if train_tok is not None:
+        target_vocab = len(train_tok)
+        if target_vocab != current_vocab:
+            log(f"\n📏 Resizing token embeddings: {current_vocab} → {target_vocab}")
+            merged.resize_token_embeddings(target_vocab)
+            try:
+                merged.tie_weights()
+            except Exception:
+                pass
+        else:
+            log("\n📏 No resize needed (vocab unchanged).")
     else:
-        log("\n📏 No resize needed (vocab unchanged).")
+        log("\n📏 Skipping token-embedding resize because tokenizer failed to load.")
 
     # Save merged model + tokenizer
     out_dir = prepare_output_dir(OUTPUT_ROOT)
     log(f"\n💾 Saving merged model to: {out_dir}")
     merged.save_pretrained(out_dir, safe_serialization=True)
     log("💾 Saving tokenizer used in training…")
-    train_tok.save_pretrained(out_dir)
+    if train_tok is not None:
+        train_tok.save_pretrained(out_dir)
+    else:
+        # Copy tokenizer artifacts from the run dir into the output so inference
+        # parity is easier to achieve even if we couldn't construct a tokenizer
+        # object in this environment.
+        possible = (
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "generation_config.json",
+            "vocab.json",
+            "merges.txt",
+            "tokenizer.json",
+            "chat_template.jinja",
+        )
+        for name in possible:
+            src = run_dir / name
+            if src.exists():
+                shutil.copy(src, out_dir / name)
+                log(f"  • Copied {name} from run dir")
 
     # Copy any extra tokenizer/training artifacts that help inference parity
     extras = (
