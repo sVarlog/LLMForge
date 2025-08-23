@@ -26,6 +26,7 @@ from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training, Pe
 import _bootstrap  # normalizes sys.path so `import config` works everywhere
 from config.config import MODEL_NAME
 
+from helpers.persist_chat_template import persist_chat_template
 from src.helpers.build_messages import build_messages
 from src.helpers.loggers import log, debug
 from config.training_config import (
@@ -516,8 +517,8 @@ def load_model_and_prepare_for_qora(tokenizer, output_dir: Path):
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    log(f"Saving base model config and tokenizer to {output_dir}")
-    config.save_pretrained(output_dir)
+    # log(f"Saving base model config and tokenizer to {output_dir}")
+    # config.save_pretrained(output_dir)
 
     model.config.pad_token_id = tokenizer.pad_token_id
 
@@ -845,11 +846,18 @@ def init_training():
     # Save chat template & tokenizer files (so canonical detection uses same template)
     log("Saving chat template to tokenizer")
     save_dir = output_dir
-    with open("templates/chat_template.jinja", "r", encoding="utf-8") as f:
-        chat_template_text = f.read()
-    tokenizer.chat_template = chat_template_text
-    tokenizer.init_kwargs["chat_template"] = chat_template_text
-    tokenizer.save_pretrained(save_dir)
+    
+    log(f"🔧 Saving chat template + tokenizer to {save_dir}")
+
+    persist_chat_template(tokenizer, save_dir)
+
+    log(f"🔧 ✅ Chat template + tokenizer saved to {save_dir}\n" + "="*60)
+
+    tmpl_path = Path(output_dir) / "chat_template.jinja"
+    tokenizer.chat_template = tmpl_path.read_text(encoding="utf-8")
+
+    tokenizer.init_kwargs["chat_template"] = tokenizer.chat_template
+    
     # also dump BPE files for inspection
     fast_tok = Tokenizer.from_file(str(save_dir / "tokenizer.json"))
     bpe = fast_tok.model
@@ -920,8 +928,23 @@ def init_training():
     except Exception:
         pass
     try:
+        def _detach_handlers_to(file_obj):
+            for name in ("transformers", "peft", "accelerate"):
+                lg = pylog.getLogger(name)
+                for h in list(lg.handlers):
+                    if getattr(h, "stream", None) is file_obj:
+                        lg.removeHandler(h)
+                        try:
+                            h.flush()
+                            h.close()
+                        except Exception:
+                            pass
+
         if FINAL_LOG_FH:
             FINAL_LOG_FH.flush()
+
+            _detach_handlers_to(FINAL_LOG_FH)
+
             FINAL_LOG_FH.close()
     except Exception:
         pass

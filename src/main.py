@@ -1,5 +1,6 @@
 import os
 import sys
+from config.training_config import FINAL_LOG_FH
 from src.helpers.loggers import log
 
 def main():

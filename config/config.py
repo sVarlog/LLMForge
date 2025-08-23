@@ -4,14 +4,9 @@ import os
 # Base model name
 MODEL_FAMILY = "deepseek-ai"
 # MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
-# Keep MODEL_NAME as the model basename and build the full path from MODEL_FAMILY
 # MODEL_NAME = "DeepSeek-R1-Distill-Qwen-7B"
 MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-# MODEL_NAME = "deepseek-ai/DeepSeek-LLM-7B-Base" 
-# MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-# Base model path (include family + name).
-# If MODEL_NAME already contains an owner/family prefix (contains '/'), use it as-is
-# to avoid duplicating the family twice (e.g. deepseek-ai/deepseek-ai/...)
+
 if "/" in MODEL_NAME:
     BASE_MODEL_PATH = MODEL_NAME
 else:
