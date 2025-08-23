@@ -11,13 +11,6 @@ from src.helpers.build_messages import build_messages
 from src.train import run_generation_and_print
 from src.helpers.loggers import log
 
-# llama.cpp is only needed for GGUF mode
-try:
-    from llama_cpp import Llama, LlamaGrammar
-    HAS_LLAMA_CPP = True
-except Exception:
-    HAS_LLAMA_CPP = False
-
 MERGED_BASE = Path("merged-models") / MODEL_FAMILY
 
 GRAMMAR_THINK_OUTPUT = r"""
@@ -109,9 +102,6 @@ def _latest_gguf_file(merged_dir: Path) -> Path:
     files = sorted([p for p in gdir.glob("*.gguf")], key=lambda p: p.stat().st_mtime)
     if not files: raise FileNotFoundError(f"No *.gguf in {gdir}")
     return files[-1]
-
-def _is_adapter_dir(p: Path) -> bool:
-    return (Path(p) / "adapter_config.json").exists()
 
 def _resolve_adapter_paths(model_dir: Path) -> tuple[Path, Path]:
     """
