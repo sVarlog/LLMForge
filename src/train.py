@@ -166,12 +166,36 @@ class StopOnSubstring(StoppingCriteria):
         return False
 
 def prepare_output_dir() -> Path:
-    existing_dirs = [
-        d for d in os.listdir(OUTPUT_BASE_DIR) if d.startswith("training-")
-    ]
-    next_training_num = len(existing_dirs) + 1
+    """Create and return a new training-N output directory under OUTPUT_BASE_DIR.
+
+    This helper performs all filesystem creation here in train.py (not in config).
+    It ensures the OUTPUT_BASE_DIR exists, picks the next training-N name, creates
+    the folder and a base checkpoint-1 inside it, then returns the Path.
+    """
+    # Ensure base exists
+    try:
+        OUTPUT_BASE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Fallback if OUTPUT_BASE_DIR isn't a Path (older callers)
+        os.makedirs(str(OUTPUT_BASE_DIR), exist_ok=True)
+
+    # List existing training-* directories (use pathlib for robustness)
+    existing_dirs = [d for d in OUTPUT_BASE_DIR.iterdir() if d.is_dir() and d.name.startswith("training-")]
+    # Determine next training number
+    nums = []
+    for d in existing_dirs:
+        try:
+            nums.append(int(d.name.split("-")[1]))
+        except Exception:
+            continue
+    next_training_num = (max(nums) + 1) if nums else (len(existing_dirs) + 1)
+
     output_dir = OUTPUT_BASE_DIR / f"training-{next_training_num}"
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ensure there is a base checkpoint folder so other code can rely on it
+    (output_dir / "checkpoint-1").mkdir(parents=True, exist_ok=True)
+
     return output_dir
 
 
@@ -395,9 +419,9 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
         canonical_assistant_ids=canonical_assistant_ids
     )
 
-    # model_device = next(model.parameters()).device
-    # inputs = {k: v.to(model_device) for k, v in inputs.items()}
-    inputs = tokenizer([formatted_text], return_tensors="pt", add_special_tokens=False)
+    model_device = next(model.parameters()).device
+    inputs = {k: (v.to(model_device) if isinstance(v, torch.Tensor) else v)
+              for k, v in inputs.items()}
 
     bad_words_ids = build_bad_words_ids(tokenizer)
         
@@ -727,21 +751,46 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
 def init_training():
     log("Preparing output directory")
     resume_checkpoint = None
-    if not TRAINING_NEW:
-        last = find_last_training_dir()
-        if last is not None:
-            log(f"TRAINING_NEW is False — reusing last training dir: {last}")
-            output_dir = last
-            # find latest checkpoint inside that dir
-            ck = find_latest_checkpoint(output_dir)
-            if ck is not None:
-                resume_checkpoint = ck
-                log(f"Found latest checkpoint: {resume_checkpoint}")
+    # Try to read any existing adapter/checkpoint info from config (read-only)
+    try:
+        from config import config as cfg
+        candidate = cfg.resolve_adapter_checkpoint()
+        if candidate is not None and TRAINING_NEW is False:
+            # If user asked to resume (TRAINING_NEW=False) prefer the config-found checkpoint
+            resume_checkpoint = candidate
+            # set output_dir to the parent training folder
+            output_dir = candidate.parent
+            log(f"Found existing adapter checkpoint via config: {candidate}")
         else:
-            log("TRAINING_NEW is False but no previous training dir found; creating new one")
+            # Otherwise create or choose a new output dir here in train.py
+            if not TRAINING_NEW:
+                last = find_last_training_dir()
+                if last is not None:
+                    log(f"TRAINING_NEW is False — reusing last training dir: {last}")
+                    output_dir = last
+                    # find latest checkpoint inside that dir
+                    ck = find_latest_checkpoint(output_dir)
+                    if ck is not None:
+                        resume_checkpoint = ck
+                        log(f"Found latest checkpoint: {resume_checkpoint}")
+                else:
+                    log("TRAINING_NEW is False but no previous training dir found; creating new one")
+                    output_dir = prepare_output_dir()
+            else:
+                output_dir = prepare_output_dir()
+    except Exception:
+        # On any failure just fall back to local logic
+        if not TRAINING_NEW:
+            last = find_last_training_dir()
+            if last is not None:
+                output_dir = last
+                ck = find_latest_checkpoint(output_dir)
+                if ck is not None:
+                    resume_checkpoint = ck
+            else:
+                output_dir = prepare_output_dir()
+        else:
             output_dir = prepare_output_dir()
-    else:
-        output_dir = prepare_output_dir()
     # Global log sink
     global FINAL_LOG_FH
     logs_dir = output_dir / "logs"

@@ -73,6 +73,7 @@ if [[ ! -f "$CONVERTER" ]]; then
   exit 1
 fi
 
+
 # Finally, run it
 echo "➡️  Running: python \"$CONVERTER\" …"
 if python "$CONVERTER" "$latest" \
