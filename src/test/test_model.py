@@ -199,39 +199,69 @@ def _eval_hf_merged(merged_dir: Path, mode: str):
     _eval_loop_hf(model, tokenizer, mode)
 
 def _eval_gguf(gguf_path: Path, mode: str):
-    chat_fmt      = os.getenv("GGUF_CHAT_FORMAT", "chat_template")  # ← use the GGUF template
-    n_ctx         = int(os.getenv("TEST_CTX", "8192"))               # bump if you want
-    n_gpu_layers  = int(os.getenv("N_GPU_LAYERS", "0"))
+    """
+    Evaluate a GGUF by rendering chat with the SAME HF tokenizer+template used elsewhere.
+    This removes template drift and fixes stop mismatch (<|im_end|> etc).
+    """
+    import re
+    from llama_cpp import Llama
+
+    # same shape check as HF path
+    SHAPE_RE = re.compile(r"^\s*<think>.*?</think>\s*<output>.*?</output>\s*$", re.S)
+    def shape_ok(txt: str) -> bool:
+        return bool(SHAPE_RE.match(txt))
+
+    # n_ctx: keep modest unless you re-convert with rope-scaling; 8192 is safe
+    n_ctx = int(os.getenv("TEST_CTX", "8192"))
+    n_gpu_layers = int(os.getenv("N_GPU_LAYERS", "0"))
+
+    # derive merged dir from .../merging-N/gguf-output/file.gguf
+    merged_dir = gguf_path.parent.parent
+    tok = _load_tokenizer_from(merged_dir)  # your existing helper
 
     llm = Llama(
         model_path=str(gguf_path),
         n_ctx=n_ctx,
         n_gpu_layers=n_gpu_layers,
-        chat_format=chat_fmt,
         verbose=False,
     )
 
-    def run_one(q: str):
-        messages = [
-            {"role": "system",
-             "content": "You are a structured assistant. Respond in exactly two parts using the format:\n"
-                        "<think>[Your reasoning]</think>\n<output>[Your answer]</output>"},
-            {"role": "user", "content": q},
-        ]
+    # build conservative stop list
+    stop_list = []
+    for s in ["<|im_end|>", "</s>", getattr(tok, "eos_token", None)]:
+        if s and s not in stop_list:
+            stop_list.append(s)
+            if not s.endswith("\n"):
+                stop_list.append(s + "\n")
 
-        # ✅ No grammar=, no response_format=
-        out = llm.create_chat_completion(
-            messages=messages,
+    samples = [s for s in os.getenv("TEST_SAMPLES", "").split(";") if s.strip()] or EVAL_QUESTIONS
+
+    for i, question in enumerate(samples, start=1):
+        messages = build_messages(SYSTEM_PROMPT, question.strip())
+        prompt = tok.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+        out = llm.create_completion(
+            prompt=prompt,
             temperature=0.0,
             max_tokens=256,
-            stop=["<|im_end|>"],
+            stop=stop_list,
         )
-        text = out["choices"][0]["message"]["content"]
-        print("\n🧪", q)
-        print(text)
+        text = out["choices"][0]["text"].strip()
 
-    for q in ["2+2?", "Translate 'focus' to Polish.", "Is 7 > 5?", "Capital of France?"]:
-        run_one(q)
+        print("\n🔧 Is structured output:", shape_ok(text))
+        print("============================================================\n")
+        print(f"🧪 Example {i}:")
+        print("📥 Prompt (tail):")
+        print(f"<|im_start|><|system|>\n{SYSTEM_PROMPT}\n<|im_end|>")
+        print(f"<|im_start|><|user|>\n{question}\n<|im_end|>\n")
+        print("<|im_start|><|assistant|>\n")
+        print("📤 Output:\n")
+        print(text)
+        print("\n")
 
 # ───────────────────────────────────────────────────────────────────────────────
 # Public entry points
