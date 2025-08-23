@@ -1,21 +1,22 @@
 version: "3.9"
 
 services:
-    trainer:
+    train:
         environment:
             - DISABLE_TRANSFORMERS_SDPA=1
             - PYTHONPATH=/workspace
+            - RUN_MODE=train
         build:
             context: .
             dockerfile: Dockerfile
         image: llm-trainer
-        container_name: LLMForge
+        container_name: llm-training
         volumes:
             - C:/Users/pc/.cache/huggingface:/root/.cache/huggingface
             - ./:/workspace
             - ./config:/workspace/config
         working_dir: /workspace
-        command: python src/train.py
+        command: python src/main.py
         deploy:
             resources:
                 reservations:
@@ -30,3 +31,52 @@ services:
                 soft: -1
                 hard: -1
             stack: 67108864
+
+    # test base + latest adapaters from checkpoint
+    test-training:
+        image: llm-trainer
+        working_dir: /workspace
+        command: python -u src/main.py
+        container_name: llm-testing-trained
+        environment:
+            - PYTHONPATH=/workspace
+            - RUN_MODE=test-training
+            - TEST_MODE=force_think
+        volumes:
+            - C:/Users/pc/.cache/huggingface:/root/.cache/huggingface
+            - ./:/workspace
+
+    # test latest merged HF
+    test-merging:
+        image: llm-trainer
+        working_dir: /workspace
+        command: python -u src/main.py
+        container_name: llm-testing-merged
+        environment:
+            - PYTHONPATH=/workspace
+            - RUN_MODE=test-merging
+            - TEST_MODE=force_think
+        volumes:
+            - ./:/workspace
+
+    # test latest gguf under the latest merging-N
+    test-gguf:
+        image: llm-trainer
+        working_dir: /workspace
+        command: >
+            bash -lc "pip install -q --no-cache-dir llama-cpp-python==0.3.5 && N_GPU_LAYERS=0 python -u src/main.py"
+        container_name: llm-testing-gguf
+        environment:
+            - PYTHONPATH=/workspace
+            - RUN_MODE=test-gguf
+            - TEST_MODE=force_think
+            - GGUF_CHAT_FORMAT=qwen
+        volumes:
+            - ./:/workspace
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          count: all
+                          capabilities: [gpu]

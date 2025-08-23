@@ -23,8 +23,10 @@ from transformers import (
 from tokenizers import Tokenizer
 
 from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training, PeftModel
+import _bootstrap  # normalizes sys.path so `import config` works everywhere
 from config.config import MODEL_NAME
 
+from helpers.persist_chat_template import persist_chat_template
 from src.helpers.build_messages import build_messages
 from src.helpers.loggers import log, debug
 from config.training_config import (
@@ -42,6 +44,7 @@ from config.training_config import (
     TRAINING_NEW,
     TRAINING_EPOCHS,
     TRAINING_EXTRA_EPOCHS,
+    EVAL_QUESTIONS
 )
 
 MAX_LEN=2048
@@ -164,12 +167,36 @@ class StopOnSubstring(StoppingCriteria):
         return False
 
 def prepare_output_dir() -> Path:
-    existing_dirs = [
-        d for d in os.listdir(OUTPUT_BASE_DIR) if d.startswith("training-")
-    ]
-    next_training_num = len(existing_dirs) + 1
+    """Create and return a new training-N output directory under OUTPUT_BASE_DIR.
+
+    This helper performs all filesystem creation here in train.py (not in config).
+    It ensures the OUTPUT_BASE_DIR exists, picks the next training-N name, creates
+    the folder and a base checkpoint-1 inside it, then returns the Path.
+    """
+    # Ensure base exists
+    try:
+        OUTPUT_BASE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Fallback if OUTPUT_BASE_DIR isn't a Path (older callers)
+        os.makedirs(str(OUTPUT_BASE_DIR), exist_ok=True)
+
+    # List existing training-* directories (use pathlib for robustness)
+    existing_dirs = [d for d in OUTPUT_BASE_DIR.iterdir() if d.is_dir() and d.name.startswith("training-")]
+    # Determine next training number
+    nums = []
+    for d in existing_dirs:
+        try:
+            nums.append(int(d.name.split("-")[1]))
+        except Exception:
+            continue
+    next_training_num = (max(nums) + 1) if nums else (len(existing_dirs) + 1)
+
     output_dir = OUTPUT_BASE_DIR / f"training-{next_training_num}"
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ensure there is a base checkpoint folder so other code can rely on it
+    (output_dir / "checkpoint-1").mkdir(parents=True, exist_ok=True)
+
     return output_dir
 
 
@@ -394,16 +421,8 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
     )
 
     model_device = next(model.parameters()).device
-    inputs = {k: v.to(model_device) for k, v in inputs.items()}
-
-    if mode == "force_think":
-        formatted_text = formatted_text + "<think>"
-        inputs = tokenizer([formatted_text], return_tensors="pt")
-        inputs = {k: v.to(model_device) for k, v in inputs.items()}
-    elif mode == "output_only":
-        formatted_text = formatted_text + "<output>"
-        inputs = tokenizer([formatted_text], return_tensors="pt")
-        inputs = {k: v.to(model_device) for k, v in inputs.items()}
+    inputs = {k: (v.to(model_device) if isinstance(v, torch.Tensor) else v)
+              for k, v in inputs.items()}
 
     bad_words_ids = build_bad_words_ids(tokenizer)
         
@@ -415,7 +434,7 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
         output = model.generate(
             **inputs,
             do_sample=False,
-            max_new_tokens=192,
+            max_new_tokens=256,
             stopping_criteria=stopping_criteria,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -438,7 +457,12 @@ def run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids
         "📤 Output:\n" + decoded + "\n"
     )
 
-    log(f"Is structured output: {is_structured_output(decoded)}")
+    # Check structured output against the full returned string (prompt + decoded)
+    try:
+        structured_flag = is_structured_output(out_str)
+    except Exception:
+        structured_flag = is_structured_output(decoded)
+    log(f"Is structured output: {structured_flag}")
     
     return out_str
 
@@ -493,8 +517,8 @@ def load_model_and_prepare_for_qora(tokenizer, output_dir: Path):
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    log(f"Saving base model config and tokenizer to {output_dir}")
-    config.save_pretrained(output_dir)
+    # log(f"Saving base model config and tokenizer to {output_dir}")
+    # config.save_pretrained(output_dir)
 
     model.config.pad_token_id = tokenizer.pad_token_id
 
@@ -527,7 +551,8 @@ def is_structured_output(text: str) -> bool:
     segment = m.group(1) if m else text
     has_think  = ("<think>" in segment and "</think>" in segment)
     has_output = ("<output>" in segment and "</output>" in segment)
-    return has_output or has_think
+
+    return has_output and has_think
 
 
 class EvalCallback(TrainerCallback):
@@ -724,62 +749,49 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
         trainer.train()
     model.save_pretrained(output_dir)
 
-
-def test_training():
-    from peft import PeftModel
-
-    BASE_MODEL = MODEL_NAME
-    training_dirs = [
-        d
-        for d in os.listdir(OUTPUT_BASE_DIR)
-        if d.startswith("training-") and os.path.isdir(os.path.join(OUTPUT_BASE_DIR, d))
-    ]
-    if not training_dirs:
-        TRAINING_NUM = 1
-        OUTPUT_DIR = OUTPUT_BASE_DIR / f"training-{TRAINING_NUM}"
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    else:
-        nums = [int(d.split("-")[1]) for d in training_dirs if d.split("-")[1].isdigit()]
-        TRAINING_NUM = max(nums)
-        OUTPUT_DIR = OUTPUT_BASE_DIR / f"training-{TRAINING_NUM}"
-
-    tokenizer = AutoTokenizer.from_pretrained(OUTPUT_DIR, trust_remote_code=True)
-    chat_template_path = Path(OUTPUT_DIR) / "chat_template.jinja"
-    assert chat_template_path.exists(), f"Template missing at: {chat_template_path}"
-    tokenizer.chat_template = chat_template_path.read_text(encoding="utf-8")
-    tokenizer.init_kwargs["chat_template"] = tokenizer.chat_template
-
-    model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, torch_dtype=torch.float16, device_map="auto")
-    model.resize_token_embeddings(len(tokenizer))
-    model = PeftModel.from_pretrained(model, OUTPUT_DIR, is_trainable=False)
-
-    examples = ["2+2?"]
-    for i, question in enumerate(examples, start=1):
-        log(f"Processing example {i}: {question}")
-        
-        messages = build_messages(SYSTEM_PROMPT, question)
-        
-        run_generation_and_print(model, tokenizer, messages, canonical_assistant_ids=None, label=f"Example {i}", mode="force_think")
-
-
-def main():
+def init_training():
     log("Preparing output directory")
     resume_checkpoint = None
-    if not TRAINING_NEW:
-        last = find_last_training_dir()
-        if last is not None:
-            log(f"TRAINING_NEW is False — reusing last training dir: {last}")
-            output_dir = last
-            # find latest checkpoint inside that dir
-            ck = find_latest_checkpoint(output_dir)
-            if ck is not None:
-                resume_checkpoint = ck
-                log(f"Found latest checkpoint: {resume_checkpoint}")
+    # Try to read any existing adapter/checkpoint info from config (read-only)
+    try:
+        from config import config as cfg
+        candidate = cfg.resolve_adapter_checkpoint()
+        if candidate is not None and TRAINING_NEW is False:
+            # If user asked to resume (TRAINING_NEW=False) prefer the config-found checkpoint
+            resume_checkpoint = candidate
+            # set output_dir to the parent training folder
+            output_dir = candidate.parent
+            log(f"Found existing adapter checkpoint via config: {candidate}")
         else:
-            log("TRAINING_NEW is False but no previous training dir found; creating new one")
+            # Otherwise create or choose a new output dir here in train.py
+            if not TRAINING_NEW:
+                last = find_last_training_dir()
+                if last is not None:
+                    log(f"TRAINING_NEW is False — reusing last training dir: {last}")
+                    output_dir = last
+                    # find latest checkpoint inside that dir
+                    ck = find_latest_checkpoint(output_dir)
+                    if ck is not None:
+                        resume_checkpoint = ck
+                        log(f"Found latest checkpoint: {resume_checkpoint}")
+                else:
+                    log("TRAINING_NEW is False but no previous training dir found; creating new one")
+                    output_dir = prepare_output_dir()
+            else:
+                output_dir = prepare_output_dir()
+    except Exception:
+        # On any failure just fall back to local logic
+        if not TRAINING_NEW:
+            last = find_last_training_dir()
+            if last is not None:
+                output_dir = last
+                ck = find_latest_checkpoint(output_dir)
+                if ck is not None:
+                    resume_checkpoint = ck
+            else:
+                output_dir = prepare_output_dir()
+        else:
             output_dir = prepare_output_dir()
-    else:
-        output_dir = prepare_output_dir()
     # Global log sink
     global FINAL_LOG_FH
     logs_dir = output_dir / "logs"
@@ -834,11 +846,18 @@ def main():
     # Save chat template & tokenizer files (so canonical detection uses same template)
     log("Saving chat template to tokenizer")
     save_dir = output_dir
-    with open("templates/chat_template.jinja", "r", encoding="utf-8") as f:
-        chat_template_text = f.read()
-    tokenizer.chat_template = chat_template_text
-    tokenizer.init_kwargs["chat_template"] = chat_template_text
-    tokenizer.save_pretrained(save_dir)
+    
+    log(f"🔧 Saving chat template + tokenizer to {save_dir}")
+
+    persist_chat_template(tokenizer, save_dir)
+
+    log(f"🔧 ✅ Chat template + tokenizer saved to {save_dir}\n" + "="*60)
+
+    tmpl_path = Path(output_dir) / "chat_template.jinja"
+    tokenizer.chat_template = tmpl_path.read_text(encoding="utf-8")
+
+    tokenizer.init_kwargs["chat_template"] = tokenizer.chat_template
+    
     # also dump BPE files for inspection
     fast_tok = Tokenizer.from_file(str(save_dir / "tokenizer.json"))
     bpe = fast_tok.model
@@ -902,9 +921,6 @@ def main():
     log("Training model")
     train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset, resume_from_checkpoint=resume_checkpoint)
 
-    log("Testing training with a small dataset")
-    test_training()
-
     try:
         # restore std streams first
         if _ORIG_STDOUT: sys.stdout = _ORIG_STDOUT
@@ -912,11 +928,30 @@ def main():
     except Exception:
         pass
     try:
+        def _detach_handlers_to(file_obj):
+            for name in ("transformers", "peft", "accelerate"):
+                lg = pylog.getLogger(name)
+                for h in list(lg.handlers):
+                    if getattr(h, "stream", None) is file_obj:
+                        lg.removeHandler(h)
+                        try:
+                            h.flush()
+                            h.close()
+                        except Exception:
+                            pass
+
         if FINAL_LOG_FH:
             FINAL_LOG_FH.flush()
+
+            _detach_handlers_to(FINAL_LOG_FH)
+
             FINAL_LOG_FH.close()
     except Exception:
         pass
 
+def start_training():
+    log("=== Starting training run ===")
+    init_training()
+
 if __name__ == "__main__":
-    main()
+    start_training()
