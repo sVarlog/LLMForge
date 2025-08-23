@@ -5,13 +5,13 @@ IFS=$'\n\t'
 # convert_to_gguf.sh
 #
 # Usage:
-#   ./convert_to_gguf.sh [--outtype <q4_0|q8_0>] [--model-dir <merged-models/deepseek-merged>]
-#   bash scripts/convert_to_gguf.sh --outtype <q8_0> --model-dir <merged-models/deepseek-merged>
+#   ./convert_to_gguf.sh [--outtype <q4_0|q8_0>] [--model-dir <merged-models/deepseek-ai>]
+#   bash scripts/convert_to_gguf.sh --outtype <q8_0> --model-dir <merged-models/deepseek-ai>
 #
 
 # Default parameters:
 OUTTYPE="q8_0"
-MERGED_MODEL_BASE="merged-models/deepseek-merged"
+MERGED_MODEL_BASE="merged-models/deepseek-ai"
 
 # Helper: print usage
 usage() {
@@ -65,7 +65,7 @@ fi
 
 # Locate the conversion script in your repo
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CONVERTER="${REPO_ROOT}/tools/llama/convert_hf_to_gguf.py"
 
 if [[ ! -f "$CONVERTER" ]]; then

@@ -7,13 +7,17 @@ from datetime import datetime
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
+import _bootstrap  # normalizes sys.path so `import config` works everywhere
+from config.config import MODEL_FAMILY, MODEL_NAME
 
 # ───────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ───────────────────────────────────────────────────────────────────────────────
-BASE_MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+
+# BASE_MODEL_NAME = "{MODEL_FAMILY}/{MODEL_NAME}"
+BASE_MODEL_NAME = f"{MODEL_FAMILY}/{MODEL_NAME}"
 ADAPTER_ROOT = Path("output") / BASE_MODEL_NAME              # where train.py wrote runs
-OUTPUT_ROOT = Path("merged-models") / "deepseek-merged"      # where to save merged model
+OUTPUT_ROOT = Path("merged-models") / f"{MODEL_FAMILY}"      # where to save merged model
 
 # ───────────────────────────────────────────────────────────────────────────────
 # Helpers

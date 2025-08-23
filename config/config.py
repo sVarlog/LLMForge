@@ -2,13 +2,15 @@ from pathlib import Path
 import os
 
 # Base model name
+MODEL_FAMILY = "deepseek-ai"
 # MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
-MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+# Keep MODEL_NAME as the model basename and build the full path from MODEL_FAMILY
+MODEL_NAME = "DeepSeek-R1-Distill-Qwen-7B"
 # MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 # MODEL_NAME = "deepseek-ai/DeepSeek-LLM-7B-Base" 
 # MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-# Base model path
-BASE_MODEL_PATH = MODEL_NAME
+# Base model path (include family + name)
+BASE_MODEL_PATH = f"{MODEL_FAMILY}/{MODEL_NAME}"
 
 # Dynamically find the latest checkpoint
 output_dir = Path(f"output/{BASE_MODEL_PATH}")
@@ -42,7 +44,7 @@ else:
     raise FileNotFoundError(f"Directory does not exist: {output_dir}")
 
 # Merged model path
-MERGED_MODEL_PATH = Path("merged-models/deepseek-merged")
+MERGED_MODEL_PATH = Path(f"merged-models/{MODEL_FAMILY}")
 
 # Allowed keys for adapter configuration cleaning
 ALLOWED_KEYS = {

@@ -1,10 +1,10 @@
-# training_config.py
 """
 Centralized configuration for training constants and settings.
 Import this in both train.py and helpers/loggers.py.
 """
 from pathlib import Path
-from config.config import MODEL_NAME
+import _bootstrap  # normalizes sys.path so `import config` works everywhere
+from config.config import MODEL_NAME, MODEL_FAMILY
 
 SYSTEM_PROMPT = (
     "You are a structured assistant. Respond in exactly two parts using the format:\n"
@@ -13,7 +13,7 @@ SYSTEM_PROMPT = (
 
 # DATA_PATH = "datasets/data.jsonl" # Old datasets
 DATA_PATH = "datasets_new/train_data.jsonl"
-OUTPUT_BASE_DIR = Path(f"output/{MODEL_NAME}")
+OUTPUT_BASE_DIR = Path(f"output/{MODEL_FAMILY}/{MODEL_NAME}")
 LORA_CONFIG_PATH = "config/lora_config.json"
 
 ASSISTANT_OPEN_WITH_NL = "<|im_start|><|assistant|>\n"
