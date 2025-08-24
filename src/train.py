@@ -746,6 +746,35 @@ def train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, 
         trainer.train()
     model.save_pretrained(output_dir)
 
+def _detach_handlers_to(file_obj):
+    for name in ("transformers", "peft", "accelerate"):
+        lg = pylog.getLogger(name)
+        for h in list(lg.handlers):
+            if getattr(h, "stream", None) is file_obj:
+                lg.removeHandler(h)
+                try:
+                    h.flush()
+                    h.close()
+                except Exception:
+                    pass
+
+def close_logs():
+    try:
+        # restore std streams first
+        if _ORIG_STDOUT: sys.stdout = _ORIG_STDOUT
+        if _ORIG_STDERR: sys.stderr = _ORIG_STDERR
+    except Exception:
+        pass
+    try:
+        if FINAL_LOG_FH:
+            FINAL_LOG_FH.flush()
+
+            _detach_handlers_to(FINAL_LOG_FH)
+
+            FINAL_LOG_FH.close()
+    except Exception:
+        pass
+
 def init_training():
     log("Preparing output directory")
     resume_checkpoint = None
@@ -800,24 +829,6 @@ def init_training():
     _ORIG_STDOUT, _ORIG_STDERR = sys.stdout, sys.stderr
     sys.stdout = _TeeStream(_ORIG_STDOUT, lambda: FINAL_LOG_FH)
     sys.stderr = _TeeStream(_ORIG_STDERR, lambda: FINAL_LOG_FH)
-
-    # === Capture Python warnings into the sink ===
-    warnings.simplefilter("default")  # show deprecations by default
-    def _showwarning(message, category, filename, lineno, file=None, line=None):
-        s = warnings.formatwarning(message, category, filename, lineno, line)
-        try:
-            if FINAL_LOG_FH:
-                FINAL_LOG_FH.write(s)
-                FINAL_LOG_FH.flush()
-        except Exception:
-            pass
-        # also print to console (already teed)
-        try:
-            _ORIG_STDERR.write(s)
-            _ORIG_STDERR.flush()
-        except Exception:
-            pass
-    warnings.showwarning = _showwarning
 
     # === Keep Transformers logger quieter to avoid config spam ===
     pylog.basicConfig(level=pylog.WARNING)
@@ -898,14 +909,13 @@ def init_training():
 
     train_dataset = dataset
 
-    # Map dataset with our tokenize_function wrapper that uses canonical ids
-    def map_fn(ex):
-        return tokenize_function(ex, tokenizer, canonical_assistant_ids)
-
-    # Remove every original column except the model features we just produced
     remove_cols = [c for c in dataset.column_names if c not in ("input_ids","labels","attention_mask","loss_weight")]
-    dataset = dataset.map(map_fn, remove_columns=remove_cols, batched=False)
-    
+    dataset = dataset.map(
+        lambda ex: tokenize_function(ex, tokenizer, canonical_assistant_ids),
+        remove_columns=remove_cols,
+        batched=False
+    )
+
     log(f"Dataset loaded with {len(dataset)} examples.")
     log(f"Sample tokenized example: {dataset[0]}")
 
@@ -918,33 +928,7 @@ def init_training():
     log("Training model")
     train_model(model, tokenizer, dataset, output_dir, canonical_assistant_ids, train_dataset, resume_from_checkpoint=resume_checkpoint)
 
-    try:
-        # restore std streams first
-        if _ORIG_STDOUT: sys.stdout = _ORIG_STDOUT
-        if _ORIG_STDERR: sys.stderr = _ORIG_STDERR
-    except Exception:
-        pass
-    try:
-        def _detach_handlers_to(file_obj):
-            for name in ("transformers", "peft", "accelerate"):
-                lg = pylog.getLogger(name)
-                for h in list(lg.handlers):
-                    if getattr(h, "stream", None) is file_obj:
-                        lg.removeHandler(h)
-                        try:
-                            h.flush()
-                            h.close()
-                        except Exception:
-                            pass
-
-        if FINAL_LOG_FH:
-            FINAL_LOG_FH.flush()
-
-            _detach_handlers_to(FINAL_LOG_FH)
-
-            FINAL_LOG_FH.close()
-    except Exception:
-        pass
+    close_logs()
 
 def start_training():
     log("=== Starting training run ===")
