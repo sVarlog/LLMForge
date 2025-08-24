@@ -44,7 +44,6 @@ from config.training_config import (
     TRAINING_NEW,
     TRAINING_EPOCHS,
     TRAINING_EXTRA_EPOCHS,
-    EVAL_QUESTIONS
 )
 
 MAX_LEN=2048
@@ -517,8 +516,6 @@ def load_model_and_prepare_for_qora(tokenizer, output_dir: Path):
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    # log(f"Saving base model config and tokenizer to {output_dir}")
-    # config.save_pretrained(output_dir)
 
     model.config.pad_token_id = tokenizer.pad_token_id
 
